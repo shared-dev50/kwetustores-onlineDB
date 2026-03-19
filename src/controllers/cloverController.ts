@@ -46,6 +46,10 @@ export const getCloverInventory = async (
     const limit = 100;
     let hasMore = true;
 
+    // Remember I am simulating pagination by fetching in batches of 100 and
+    // merging results until there are no more items to fetch. This is
+    // because Clover's API does not provide a total count of items, so I have
+    // to keep fetching until I get a batch smaller than the limit.
     while (hasMore) {
       const response = await cloverClient.get<CloverInventoryResponse>(
         "/items",
@@ -74,7 +78,11 @@ export const getCloverInventory = async (
     const uniqueMap = new Map<string, CloverItem>();
     allItems.forEach(item => {
       if (item.id) {
-        uniqueMap.set(item.id, item);
+        const processedItem = {
+          ...item,
+          price: item.price ? item.price / 100 : 0,
+        };
+        uniqueMap.set(item.id, processedItem);
       }
     });
 
@@ -93,12 +101,6 @@ export const getCloverInventory = async (
       `Clover API Error (${statusCode}):`,
       errorData || error.message,
     );
-
-    if (error.config) {
-      console.error(
-        `Attempted URL: ${error.config.baseURL}${error.config.url}`,
-      );
-    }
 
     res.status(statusCode).json({
       success: false,
@@ -122,9 +124,14 @@ export const getSingleCloverItem = async (req: Request, res: Response) => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
+    const item = response.data;
+    if (item.price) {
+      item.price = item.price / 100;
+    }
+
     res.json({
       success: true,
-      data: response.data,
+      data: item,
     });
   } catch (error: any) {
     res.status(404).json({ success: false, message: "Item not found" });
