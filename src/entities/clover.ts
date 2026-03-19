@@ -15,10 +15,11 @@ export interface CloverTag {
 export interface CloverItem {
   id: string;
   name: string;
-  price: number; 
-  code: string; 
+  price: number;
+  code: string;
   sku: string;
   stockCount: number;
+  stockQuantity: number;
   available: boolean;
   hidden: boolean;
   onlineName: string;

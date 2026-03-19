@@ -7,86 +7,107 @@ export interface CloverInventoryResponse {
   href: string;
 }
 
+interface CloverStockElement {
+  item?: { id?: string };
+  quantity?: number;
+}
+
+interface CloverStockResponse {
+  elements: CloverStockElement[];
+}
+
+const getCloverConfig = () => {
+  const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
+  const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
+  const baseUrl = process.env.CLOVER_BASE_URL?.trim();
+
+  if (!token || !merchantId || !baseUrl) {
+    throw new Error("Missing Clover ENV variables");
+  }
+
+  return {
+    token,
+    merchantId,
+    baseUrl: baseUrl.replace(/\/$/, ""),
+  };
+};
+
+const createCloverClient = () => {
+  const { token, merchantId, baseUrl } = getCloverConfig();
+
+  return axios.create({
+    baseURL: `${baseUrl}/merchants/${merchantId}`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "Kwetu-Stores-Backend",
+    },
+  });
+};
+
 export const getCloverInventory = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   try {
-    const token = process.env.CLOVER_SECRET?.replace(
-      /[^\x20-\x7E]/g,
-      "",
-    ).trim();
-    const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
-    const baseUrl = process.env.CLOVER_BASE_URL?.trim();
+    const cloverClient = createCloverClient();
 
-    if (!token || !merchantId || !baseUrl) {
-      console.error("Missing Clover ENV variables at runtime");
-      res.status(500).json({
-        success: false,
-        message: "Server Configuration Error",
+    const stockMap = new Map<string, number>();
+    let stockOffset = 0;
+    const stockLimit = 100;
+    let hasMoreStock = true;
+
+    while (hasMoreStock) {
+      const stockResponse = await cloverClient.get<CloverStockResponse>(
+        "/item_stocks",
+        {
+          params: { limit: stockLimit, offset: stockOffset },
+        },
+      );
+
+      const stockElements = stockResponse.data.elements || [];
+
+      stockElements.forEach(stock => {
+        const itemId = stock.item?.id;
+        if (itemId) {
+          stockMap.set(itemId, stock.quantity ?? 0);
+        }
       });
-      return;
+
+      hasMoreStock = stockElements.length === stockLimit;
+      if (hasMoreStock) stockOffset += stockLimit;
     }
 
-    const cleanBaseUrl = baseUrl.replace(/\/$/, "");
-    const finalBaseUrl = `${cleanBaseUrl}/merchants/${merchantId}`;
-
-    const cloverClient = axios.create({
-      baseURL: finalBaseUrl,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Kwetu-Stores-Backend",
-      },
-    });
-
     let allItems: CloverItem[] = [];
-    let offset = 0;
-    const limit = 100;
-    let hasMore = true;
+    let itemOffset = 0;
+    const itemLimit = 100;
+    let hasMoreItems = true;
 
-    // Remember I am simulating pagination by fetching in batches of 100 and
-    // merging results until there are no more items to fetch. This is
-    // because Clover's API does not provide a total count of items, so I have
-    // to keep fetching until I get a batch smaller than the limit.
-    while (hasMore) {
+    while (hasMoreItems) {
       const response = await cloverClient.get<CloverInventoryResponse>(
         "/items",
         {
           params: {
             expand: "images,tags,categories",
-            limit: limit,
-            offset: offset,
+            limit: itemLimit,
+            offset: itemOffset,
           },
         },
       );
 
       const elements = response.data.elements || [];
+      allItems.push(...elements);
 
-      if (elements.length > 0) {
-        allItems = [...allItems, ...elements];
-      }
-
-      if (elements.length === limit) {
-        offset += limit;
-      } else {
-        hasMore = false;
-      }
+      hasMoreItems = elements.length === itemLimit;
+      if (hasMoreItems) itemOffset += itemLimit;
     }
 
-    const uniqueMap = new Map<string, CloverItem>();
-    allItems.forEach(item => {
-      if (item.id) {
-        const processedItem = {
-          ...item,
-          price: item.price ? item.price / 100 : 0,
-        };
-        uniqueMap.set(item.id, processedItem);
-      }
-    });
-
-    const finalItems = Array.from(uniqueMap.values());
+    const finalItems = allItems.map(item => ({
+      ...item,
+      price: item.price != null ? item.price / 100 : 0,
+      stockQuantity: item.id ? (stockMap.get(item.id) ?? 0) : 0,
+    }));
 
     res.status(200).json({
       success: true,
@@ -104,36 +125,54 @@ export const getCloverInventory = async (
 
     res.status(statusCode).json({
       success: false,
-      message: errorData?.message || "Error fetching from Clover",
+      message:
+        errorData?.message || error.message || "Error fetching from Clover",
       details: errorData || null,
     });
   }
 };
 
-export const getSingleCloverItem = async (req: Request, res: Response) => {
+export const getSingleCloverItem = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
   try {
     const { id } = req.params;
-    const token = process.env.CLOVER_SECRET?.trim();
-    const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
-    const baseUrl = process.env.CLOVER_BASE_URL?.trim();
+    const cloverClient = createCloverClient();
 
-    const url = `${baseUrl}/merchants/${merchantId}/items/${id}`;
+    const [itemResponse, stockResponse] = await Promise.all([
+      cloverClient.get(`/items/${id}`, {
+        params: { expand: "images,categories,tags" },
+      }),
+      cloverClient.get(`/item_stocks/${id}`),
+    ]);
 
-    const response = await axios.get(url, {
-      params: { expand: "images,categories,tags" },
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const item = itemResponse.data;
+    const stockQuantity = stockResponse.data?.quantity ?? 0;
 
-    const item = response.data;
-    if (item.price) {
-      item.price = item.price / 100;
-    }
+    const processedItem = {
+      ...item,
+      price: item.price != null ? item.price / 100 : 0,
+      stockQuantity,
+    };
 
-    res.json({
+    res.status(200).json({
       success: true,
-      data: item,
+      data: processedItem,
     });
   } catch (error: any) {
-    res.status(404).json({ success: false, message: "Item not found" });
+    const errorData = error.response?.data;
+    const statusCode = error.response?.status || 500;
+
+    console.error(
+      `Clover API Error (${statusCode}):`,
+      errorData || error.message,
+    );
+
+    res.status(statusCode).json({
+      success: false,
+      message: errorData?.message || "Error fetching item from Clover",
+      details: errorData || null,
+    });
   }
 };
