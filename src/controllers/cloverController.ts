@@ -105,7 +105,7 @@ export const getCloverInventory = async (
 
     const finalItems = allItems.map(item => ({
       ...item,
-      price: item.price != null ? item.price / 100 : 0,
+      price: item.price != null ? Number((item.price / 100).toFixed(2)) : 0.0,
       stockQuantity: item.id ? (stockMap.get(item.id) ?? 0) : 0,
     }));
 
@@ -152,10 +152,9 @@ export const getSingleCloverItem = async (
 
     const processedItem = {
       ...item,
-      price: item.price != null ? item.price / 100 : 0,
+      price: item.price != null ? Number((item.price / 100).toFixed(2)) : 0.0,
       stockQuantity,
     };
-
     res.status(200).json({
       success: true,
       data: processedItem,
@@ -174,5 +173,44 @@ export const getSingleCloverItem = async (
       message: errorData?.message || "Error fetching item from Clover",
       details: errorData || null,
     });
+  }
+};
+
+export const getCloverCategories = async (req: Request, res: Response) => {
+  try {
+    const cloverClient = createCloverClient();
+    let allCategories: any[] = [];
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await cloverClient.get("/categories", {
+        params: {
+          limit: limit,
+          offset: offset,
+        },
+      });
+
+      const elements = response.data.elements || [];
+      allCategories = [...allCategories, ...elements];
+
+      if (elements.length === limit) {
+        offset += limit;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      count: allCategories.length,
+      data: allCategories,
+    });
+  } catch (error: any) {
+    console.error("Clover Categories Error:", error.message);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch categories" });
   }
 };
