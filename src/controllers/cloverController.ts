@@ -214,3 +214,81 @@ export const getCloverCategories = async (req: Request, res: Response) => {
       .json({ success: false, message: "Failed to fetch categories" });
   }
 };
+
+export const createCheckout = async (req: Request, res: Response) => {
+  try {
+    const token = process.env.CLOVER_SECRET?.replace(
+      /[^\x20-\x7E]/g,
+      "",
+    ).trim();
+    const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
+    const frontendUrl = process.env.FRONTEND_URL?.trim();
+
+    const { items, customer } = req.body;
+
+    if (!token || !merchantId || !frontendUrl) {
+      return res.status(500).json({ error: "Missing server configuration" });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "Cart is empty" });
+    }
+
+    const lineItems = items.map((entry: any) => ({
+      name: entry.product.name,
+      unitQty: entry.quantity,
+      price: Math.round(entry.product.price * 100),
+    }));
+
+    const checkoutResponse = await axios.post(
+      "https://api.clover.com/invoicingcheckoutservice/v1/checkouts",
+      {
+        customer: {
+          email: customer.email,
+          firstName: customer.firstName,
+          lastName: customer.lastName,
+          phoneNumber: customer.phoneNumber,
+        },
+        shoppingCart: {
+          lineItems: items.map((item: any) => ({
+            name: item.product.name,
+            unitQty: item.quantity,
+            price: Math.round(item.product.price * 100),
+          })),
+        },
+        successUrl: `${process.env.FRONTEND_URL}/success`,
+        cancelUrl: `${process.env.FRONTEND_URL}/cart`,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-Clover-Merchant-Id": merchantId,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      },
+    );
+
+    return res.json({
+      success: true,
+      checkoutUrl: checkoutResponse.data.href,
+    });
+  } catch (error: any) {
+    console.error("Clover API Error:", error.response?.data || error.message);
+    return res.status(error.response?.status || 500).json({
+      error: "Could not initialize Clover payment",
+      details: error.response?.data || null,
+    });
+  }
+};
+
+export const handleCloverWebhook = async (req: Request, res: Response) => {
+  const event = req.body;
+
+  if (event.type === "PAYMENT_SUCCESS") {
+    const { orderId, amount } = event.data;
+
+    console.log(`Payment received for order ${orderId}: ${amount}`);
+  }
+  res.status(200).send("EVENT_RECEIVED");
+};
