@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
 
@@ -15,6 +16,14 @@ interface CloverStockElement {
 interface CloverStockResponse {
   elements: CloverStockElement[];
 }
+// Nodemailer transporter
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 const getCloverConfig = () => {
   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
@@ -224,22 +233,44 @@ export const createCheckout = async (req: Request, res: Response) => {
     const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
     const frontendUrl = process.env.FRONTEND_URL?.trim();
 
-    const { items, customer } = req.body;
+    const { items, customer, orderType, address } = req.body;
 
     if (!token || !merchantId || !frontendUrl) {
       return res.status(500).json({ error: "Missing server configuration" });
     }
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Cart is empty" });
-    }
+    const totalItemsCount = items.reduce(
+      (acc: number, item: any) => acc + item.quantity,
+      0,
+    );
 
-    const lineItems = items.map((entry: any) => ({
-      name: entry.product.name,
-      unitQty: entry.quantity,
-      price: Math.round(entry.product.price * 100),
+    const lineItems = items.map((item: any) => ({
+      name: item.product.name,
+      unitQty: item.quantity,
+      price: Math.round(item.product.price * 100),
     }));
 
+    let shippingAmount = 0;
+    if (
+      orderType === "DELIVERY" &&
+      totalItemsCount > 0 &&
+      totalItemsCount < 4
+    ) {
+      shippingAmount = totalItemsCount * 7;
+      lineItems.push({
+        id: "P79B9AXNV6BP4",
+        name: "Shipping Fee",
+        unitQty: totalItemsCount,
+        price: 700,
+        note: "Per-item shipping rate",
+      });
+    }
+    const finalCloverNote = `
+${address} 
+---
+ITEMS:
+${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
+`.trim();
     const checkoutResponse = await axios.post(
       "https://api.clover.com/invoicingcheckoutservice/v1/checkouts",
       {
@@ -250,14 +281,11 @@ export const createCheckout = async (req: Request, res: Response) => {
           phoneNumber: customer.phoneNumber,
         },
         shoppingCart: {
-          lineItems: items.map((item: any) => ({
-            name: item.product.name,
-            unitQty: item.quantity,
-            price: Math.round(item.product.price * 100),
-          })),
+          lineItems: lineItems,
         },
-        successUrl: `${process.env.FRONTEND_URL}/success`,
-        cancelUrl: `${process.env.FRONTEND_URL}/cart`,
+        note: finalCloverNote,
+        successUrl: `${frontendUrl}/success`,
+        cancelUrl: `${frontendUrl}/cart`,
       },
       {
         headers: {
@@ -285,10 +313,61 @@ export const createCheckout = async (req: Request, res: Response) => {
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
-  if (event.type === "PAYMENT_SUCCESS") {
-    const { orderId, amount } = event.data;
-
-    console.log(`Payment received for order ${orderId}: ${amount}`);
-  }
   res.status(200).send("EVENT_RECEIVED");
+
+  if (event.type === "PAYMENT_SUCCESS") {
+    const { orderId } = event.data;
+
+    try {
+      // 1. Fetch order from Clover
+      const cloverOrder = await axios.get(
+        `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim()}`,
+          },
+        },
+      );
+
+      const orderNote = cloverOrder.data.note;
+      const customerEmail =
+        cloverOrder.data.customers?.elements?.[0]?.emailAddresses?.elements?.[0]
+          ?.email;
+
+      // 2. NOTIFY MERCHANT
+      await transporter.sendMail({
+        from: `"Kwetu Order System" <${process.env.EMAIL_USER}>`,
+        to: process.env.MERCHANT_NOTIFICATION_EMAIL,
+        subject: `🚨 NEW ORDER - ${orderId}`,
+        html: `
+          <h2 style="color: #ea580c;">New Sale Confirmed!</h2>
+          <p>Pack this order immediately. Details below:</p>
+          <div style="background: #f4f4f4; padding: 15px; border-radius: 10px;">
+            <pre style="font-family: sans-serif; white-space: pre-wrap;">${orderNote}</pre>
+          </div>
+        `,
+      });
+
+      // 3. NOTIFY BUYER
+      if (customerEmail) {
+        await transporter.sendMail({
+          from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
+          to: customerEmail,
+          subject: `Thank you for your order!`,
+          html: `
+            <h2>Order Confirmation</h2>
+            <p>We've received your payment. Here are your order details:</p>
+            <div style="border: 1px solid #eee; padding: 15px;">
+              <pre style="font-family: sans-serif; white-space: pre-wrap;">${orderNote}</pre>
+            </div>
+            <p>If you have any questions, please contact us!</p>
+          `,
+        });
+      }
+
+      console.log(`Success: Notifications sent for Order ${orderId}`);
+    } catch (err) {
+      console.error("Webhook Processing Error:", err);
+    }
+  }
 };
