@@ -251,20 +251,21 @@ export const createCheckout = async (req: Request, res: Response) => {
     }));
 
     let shippingAmount = 0;
-    if (
-      orderType === "DELIVERY" &&
-      totalItemsCount > 0 &&
-      totalItemsCount < 4
-    ) {
-      shippingAmount = totalItemsCount * 7;
+    
+    if (orderType === "DELIVERY" && totalItemsCount > 0) {
+
+      const chargeableQuantity = Math.min(totalItemsCount, 3);
+      shippingAmount = chargeableQuantity * 700; 
+
       lineItems.push({
         id: "P79B9AXNV6BP4",
         name: "Shipping Fee",
-        unitQty: totalItemsCount,
-        price: 700,
-        note: "Per-item shipping rate",
+        unitQty: 1, 
+        price: shippingAmount, 
+        note: totalItemsCount >= 3 ? "Flat rate shipping (3+ items)" : "Per-item shipping rate",
       });
     }
+
     const finalCloverNote = `
 ${address} 
 ---
