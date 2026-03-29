@@ -252,17 +252,16 @@ export const createCheckout = async (req: Request, res: Response) => {
 
     let shippingAmount = 0;
     
-    if (orderType === "DELIVERY" && totalItemsCount > 0) {
-
-      const chargeableQuantity = Math.min(totalItemsCount, 3);
-      shippingAmount = chargeableQuantity * 700; 
+   if (orderType === "DELIVERY" && totalItemsCount > 0) {
+ 
+      shippingAmount = totalItemsCount * 700; 
 
       lineItems.push({
-        id: "P79B9AXNV6BP4",
+        id: "P79B9AXNV6BP4", 
         name: "Shipping Fee",
         unitQty: 1, 
         price: shippingAmount, 
-        note: totalItemsCount >= 3 ? "Flat rate shipping (3+ items)" : "Per-item shipping rate",
+        note: `Shipping for ${totalItemsCount} items @ $7.00 each`,
       });
     }
 
