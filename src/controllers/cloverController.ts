@@ -322,7 +322,7 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
         },
         note: finalCloverNote,
         successUrl: `${frontendUrl}/success`,
-        cancelUrl: `${frontendUrl}/cart`,
+        cancelUrl: `${frontendUrl}/cancel`,
       },
       {
         headers: {
@@ -352,21 +352,33 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 };
 
 export const handleCloverWebhook = async (req: Request, res: Response) => {
-  const event = req.body;
+const event = req.body;
+
+  if (event.verificationCode) {
+    return res.status(200).send(event.verificationCode);
+  }
 
   res.status(200).send("EVENT_RECEIVED");
 
-  if (event.type === "PAYMENT_SUCCESS") {
-    const { orderId } = event.data;
+
+const merchantId = Object.keys(event.merchants || {})[0];
+  const updates = event.merchants?.[merchantId];
+
+  if (!updates) return;
+
+  for (const update of updates) {
+    if (update.type === "PAYMENT") {
+      const orderId = update.objectId;
 
     try {
       // 1. Fetch order from Clover
       const cloverOrder = await axios.get(
-        `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
+        // `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
+        `https://apisandbox.dev.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
         {
           headers: {
             Authorization: `Bearer ${process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim()}`,
-          },
+          } 
         },
       );
 
@@ -411,4 +423,5 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       console.error("Webhook Processing Error:", err);
     }
   }
-};
+}
+}
