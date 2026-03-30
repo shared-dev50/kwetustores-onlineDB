@@ -3,7 +3,7 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
-import cloverRoutes from "./routes/cloverRoutes.js";
+import cloverRoutes from "./src/routes/cloverRoutes.js";
 
 const app = express();
 const port = process.env.PORT || 3000;
