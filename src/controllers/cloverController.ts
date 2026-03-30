@@ -25,10 +25,28 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// const getCloverConfig = () => {
+//   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
+//   const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
+//   const baseUrl = process.env.CLOVER_BASE_URL?.trim();
+
+//   if (!token || !merchantId || !baseUrl) {
+//     throw new Error("Missing Clover ENV variables");
+//   }
+
+//   return {
+//     token,
+//     merchantId,
+//     baseUrl: baseUrl.replace(/\/$/, ""),
+//   };
+// };
+
 const getCloverConfig = () => {
   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
   const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
   const baseUrl = process.env.CLOVER_BASE_URL?.trim();
+  const ecommUrl = process.env.CLOVER_ECOMM_URL?.trim() || "https://scl-sandbox.dev.clover.com";
+  const frontendUrl = process.env.FRONTEND_URL?.trim();
 
   if (!token || !merchantId || !baseUrl) {
     throw new Error("Missing Clover ENV variables");
@@ -37,20 +55,35 @@ const getCloverConfig = () => {
   return {
     token,
     merchantId,
-    baseUrl: baseUrl.replace(/\/$/, ""),
+    baseUrl: baseUrl.replace(/\/$/, ""), 
+    ecommUrl: ecommUrl.replace(/\/$/, ""),
+    frontendUrl: frontendUrl ? frontendUrl.replace(/\/$/, "") : undefined,  
   };
 };
+
+// const createCloverClient = () => {
+//   const { token, merchantId, baseUrl } = getCloverConfig();
+
+//   return axios.create({
+//     baseURL: `${baseUrl}/merchants/${merchantId}`,
+//     headers: {
+//       Authorization: `Bearer ${token}`,
+//       Accept: "application/json",
+//       "Content-Type": "application/json",
+//       "User-Agent": "Kwetu-Stores-Backend",
+//     },
+//   });
+// };
 
 const createCloverClient = () => {
   const { token, merchantId, baseUrl } = getCloverConfig();
 
   return axios.create({
-    baseURL: `${baseUrl}/merchants/${merchantId}`,
+    baseURL: `${baseUrl}/v3/merchants/${merchantId}`, 
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "Kwetu-Stores-Backend",
     },
   });
 };
@@ -226,13 +259,16 @@ export const getCloverCategories = async (req: Request, res: Response) => {
 
 export const createCheckout = async (req: Request, res: Response) => {
   try {
-    const token = process.env.CLOVER_SECRET?.replace(
-      /[^\x20-\x7E]/g,
-      "",
-    ).trim();
-    const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
-    const frontendUrl = process.env.FRONTEND_URL?.trim();
+    // const token = process.env.CLOVER_SECRET?.replace(
+    //   /[^\x20-\x7E]/g,
+    //   "",
+    // ).trim();
+    // const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
+    // const frontendUrl = process.env.FRONTEND_URL?.trim();
 
+    // const { items, customer, orderType, address } = req.body;
+    const { token, merchantId, ecommUrl, frontendUrl
+     } = getCloverConfig();
     const { items, customer, orderType, address } = req.body;
 
     if (!token || !merchantId || !frontendUrl) {
@@ -257,7 +293,8 @@ export const createCheckout = async (req: Request, res: Response) => {
       shippingAmount = totalItemsCount * 700; 
 
       lineItems.push({
-        id: "P79B9AXNV6BP4", 
+        // id: "P79B9AXNV6BP4", 
+        id:"71CZGC2X5GRT2",
         name: "Shipping Fee",
         unitQty: 1, 
         price: shippingAmount, 
@@ -272,8 +309,8 @@ ITEMS:
 ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 `.trim();
     const checkoutResponse = await axios.post(
-      "https://api.clover.com/invoicingcheckoutservice/v1/checkouts",
-      {
+      // "https://api.clover.com/invoicingcheckoutservice/v1/checkouts",
+"https://apisandbox.dev.clover.com/invoicingcheckoutservice/v1/checkouts",      {
         customer: {
           email: customer.email,
           firstName: customer.firstName,
@@ -301,12 +338,16 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
       success: true,
       checkoutUrl: checkoutResponse.data.href,
     });
+  // } catch (error: any) {
+  //   console.error("Clover API Error:", error.response?.data || error.message);
+  //   return res.status(error.response?.status || 500).json({
+  //     error: "Could not initialize Clover payment",
+  //     details: error.response?.data || null,
+  //   });
+  // }
   } catch (error: any) {
-    console.error("Clover API Error:", error.response?.data || error.message);
-    return res.status(error.response?.status || 500).json({
-      error: "Could not initialize Clover payment",
-      details: error.response?.data || null,
-    });
+    console.error("Checkout Error Details:", error.response?.data || error.message);
+    res.status(500).json({ error: "Checkout failed" });
   }
 };
 
