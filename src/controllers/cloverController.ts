@@ -326,72 +326,96 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
-  // Handshake for Clover
+  // 1. Handshake for Clover verification
   if (event.verificationCode) return res.status(200).send(event.verificationCode);
 
   console.log("🚀 Webhook Triggered. Event ID:", event.id);
 
+  const { token, merchantId } = getCloverConfig();
+
+  // Nodemailer transport
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    debug: true,
+    logger: true,
+  });
+
+  // Extract some basic info from the event
+  const paymentId = event.id;
+  const fallbackNote = event.message || "No order note available";
+  const fallbackBuyerEmail = event.receipt_email || null;
+
   try {
-    const { token, merchantId } = getCloverConfig();
+    // Attempt to fetch the payment (may 404)
+    let orderData: any = {};
+    let buyerEmail = fallbackBuyerEmail;
+    let orderNote = fallbackNote;
+    let orderId: string | null = null;
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      debug: true,
-      logger: true,
-    });
+    try {
+      const paymentResponse = await axios.get(
+        `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}?expand=order`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-    // 1️⃣ Get payment details
-    const paymentId = event.id;
-    const paymentResponse = await axios.get(
-      `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}?expand=order`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+      orderId = paymentResponse.data.order?.id || null;
+      buyerEmail = paymentResponse.data.receipt_email || buyerEmail;
+      orderNote = paymentResponse.data.note || orderNote;
 
-    const orderId = paymentResponse.data.order?.id || "UNKNOWN_ORDER";
+      // Try to fetch the full order if we have an orderId
+      if (orderId) {
+        const cloverOrder = await axios.get(
+          `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=customers,lineItems`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
 
-    // 2️⃣ Extract buyer info from metadata if present
-    const metadata = paymentResponse.data.metadata || {};
-    const buyerEmail = metadata.buyerEmail || paymentResponse.data.receipt_email;
-    const orderNote = metadata.address || paymentResponse.data.note || "No address provided";
+        orderData = cloverOrder.data;
+        // Override note and buyer email if available
+        orderNote = cloverOrder.data.note || orderNote;
+        buyerEmail =
+          orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email || buyerEmail;
+      }
 
-    console.log(`🔍 Order Note: ${orderNote.substring(0, 50)}...`);
+    } catch (fetchErr: any) {
+      console.warn("⚠️ Clover API fetch failed, using fallback event data.", fetchErr.message);
+    }
+
+    console.log(`🔍 Order Note: ${orderNote}`);
     console.log(`🔍 Buyer Email: ${buyerEmail || "NONE FOUND"}`);
 
-    // 3️⃣ Send Merchant Email
+    // 2. SEND MERCHANT EMAIL
     await transporter.sendMail({
       from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 Kwetu Order: ${orderId}`,
+      subject: `🚨 Kwetu Order: ${orderId || paymentId}`,
       html: `<div style="padding:20px; border:1px solid #ddd;">
               <h2>New Order!</h2>
-              <p><strong>Note / Address:</strong></p>
+              <p><strong>Note/Address:</strong></p>
               <pre>${orderNote}</pre>
-             </div>`,
+             </div>`
     });
     console.log("✅ Merchant Email Sent Successfully");
 
-    // 4️⃣ Send Buyer Email if we have it
+    // 3. SEND BUYER EMAIL (if email exists)
     if (buyerEmail) {
       await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
         to: buyerEmail,
         subject: `Your Kwetu Stores Order Confirmation`,
-        html: `<p>We received your payment for order <b>${orderId}</b>.</p>
-               <p>Shipping / Instructions: ${orderNote}</p>`,
+        html: `<p>We received your payment for order <b>${orderId || paymentId}</b>.</p>
+               <p>Instructions / Note: ${orderNote}</p>`
       });
       console.log("✅ Buyer Email Sent Successfully");
-    } else {
-      console.log("⚠️ Buyer email not found; skipping buyer notification");
     }
 
     return res.status(200).send("SUCCESS");
 
   } catch (err: any) {
-    console.error("❌ WEBHOOK CRASHED:", err.message);
+    console.error("❌ WEBHOOK PROCESSING FAILED:", err.message);
     return res.status(500).send("ERROR");
   }
 };
