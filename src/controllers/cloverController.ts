@@ -296,8 +296,8 @@ export const createCheckout = async (req: Request, res: Response) => {
         // id: "P79B9AXNV6BP4", 
         id:"71CZGC2X5GRT2",
         name: "Shipping Fee",
-        unitQty: 1, 
-        price: shippingAmount, 
+        unitQty: totalItemsCount, 
+        price: 700, 
         note: `Shipping for ${totalItemsCount} items @ $7.00 each`,
       });
     }
@@ -321,7 +321,6 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
           lineItems: lineItems,
         },
         note: finalCloverNote,
-        description:finalCloverNote,
         successUrl: `${frontendUrl}/success`,
         cancelUrl: `${frontendUrl}/cancel`,
       },
@@ -355,103 +354,117 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
-  // 1. CLOVER HANDSHAKE (Verification)
+  console.log("CLOVER WEBHOOK BODY:", JSON.stringify(event, null, 2));
+
   if (event.verificationCode) {
-    console.log("✅ Clover Handshake Received:", event.verificationCode);
     return res.status(200).send(event.verificationCode);
   }
 
-  // 2. ACKNOWLEDGE RECEIPT 
-  res.status(200).send("EVENT_RECEIVED");
+  try {
+    const { token, merchantId } = getCloverConfig();
 
-  console.log("📩 Webhook Received. Full Body:", JSON.stringify(event, null, 2));
+    const webhookMerchantId = Object.keys(event.merchants || {})[0];
+    const updates = event.merchants?.[webhookMerchantId];
 
-  // 3. EXTRACT THE ORDER ID
-  const merchantId = Object.keys(event.merchants || {})[0];
-  const updates = event.merchants?.[merchantId];
+    if (!updates || !Array.isArray(updates)) {
+      return res.status(200).send("NO_UPDATES");
+    }
 
-  if (!updates || !Array.isArray(updates)) {
-    console.log("ℹ️ No specific merchant updates found in this ping.");
-    return;
-  }
+    for (const update of updates) {
+      if (update.type === "PAYMENT") {
+        const paymentId = update.objectId;
 
-  for (const update of updates) {
-    // Check for "PAYMENT" (Sandbox) or "PAYMENT_SUCCESS"
-    if (update.type === "PAYMENT" || update.type === "PAYMENT_SUCCESS") {
-      const orderId = update.objectId;
-      console.log(`🚀 Processing Success for Order: ${orderId}`);
+        try {
+          console.log("Processing payment:", paymentId);
 
-      try {
-        // FETCH FULL ORDER FROM CLOVER
+          // 1. Fetch payment first
+          const paymentResponse = await axios.get(
+            `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}?expand=order`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+            }
+          );
 
-        const cloverOrder = await axios.get(
-          // `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
-          `https://apisandbox.dev.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers,lineItems`,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.CLOVER_SECRET?.trim()}`,
-            },
+          const orderId = paymentResponse.data.order?.id;
+
+          if (!orderId) {
+            console.warn(`No order found for payment ${paymentId}`);
+            continue;
           }
-        );
 
-        const orderData = cloverOrder.data;
-        const orderNote = orderData.note || "No specific delivery instructions provided.";
-        
-        const customerEmail = 
-          orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email;
+          console.log("Resolved orderId:", orderId);
 
-        console.log(`📧 Found Customer Email: ${customerEmail || "Not Found"}`);
+          // 2. Fetch order
+          const cloverOrder = await axios.get(
+            // `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
+            `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=customers`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+            }
+          );
 
-        // TEST TRANSPORTER
-        await transporter.verify();
-        console.log("🔗 SMTP Connection Verified.");
+          const orderNote = cloverOrder.data.note || "No order note found";
+          const customerEmail =
+            cloverOrder.data.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email;
 
-        // NOTIFY MERCHANT
-        const merchantMail = await transporter.sendMail({
-          from: `"Kwetu Order System" <${process.env.EMAIL_USER}>`,
-          to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-          subject: `🚨 NEW ORDER - ${orderId}`,
-          html: `
-            <div style="font-family: sans-serif; max-width: 600px; border: 1px solid #eee; padding: 20px;">
-              <h2 style="color: #ea580c;">New Sale Confirmed!</h2>
-              <p><strong>Order ID:</strong> ${orderId}</p>
-              <hr />
-              <p><strong>Order Details & Address:</strong></p>
-              <div style="background: #f9f9f9; padding: 15px; border-radius: 8px;">
-                <pre style="white-space: pre-wrap;">${orderNote}</pre>
-              </div>
-              <p style="font-size: 12px; color: #666;">Check your Clover dashboard for full line-item breakdown.</p>
-            </div>
-          `,
-        });
-        console.log("✅ Merchant Notification Sent:", merchantMail.messageId);
+          console.log("Customer email:", customerEmail);
 
-        // NOTIFY BUYER
-        if (customerEmail) {
-          const buyerMail = await transporter.sendMail({
-            from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
-            to: customerEmail,
-            subject: `Order Confirmation - Kwetu Stores`,
+          // 3. Notify merchant
+          await transporter.sendMail({
+            from: `"Kwetu Order System" <${process.env.EMAIL_USER}>`,
+            to: process.env.MERCHANT_NOTIFICATION_EMAIL,
+            subject: `🚨 NEW ORDER - ${orderId}`,
             html: `
-              <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
-                <h2>Thank you for your order!</h2>
-                <p>We've received your payment for order <strong>#${orderId}</strong>.</p>
-                <p>Our team is currently preparing your items for delivery/pickup.</p>
-                <div style="border-top: 1px solid #eee; padding-top: 10px; margin-top: 20px;">
-                  <p><strong>Shipping/Instructions:</strong></p>
-                  <p>${orderNote}</p>
-                </div>
-                <p>If you have any questions, feel free to reply to this email.</p>
+              <h2 style="color: #ea580c;">New Sale Confirmed!</h2>
+              <p>Pack this order immediately. Details below:</p>
+              <div style="background: #f4f4f4; padding: 15px; border-radius: 10px;">
+                <pre style="font-family: sans-serif; white-space: pre-wrap;">${orderNote}</pre>
               </div>
             `,
           });
-          console.log("✅ Buyer Notification Sent:", buyerMail.messageId);
-        }
 
-      } catch (err: any) {
-        console.error("❌ Webhook Error Detail:", err.response?.data || err.message);
+          console.log("Merchant email sent");
+
+          // 4. Notify buyer
+          if (customerEmail) {
+            await transporter.sendMail({
+              from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
+              to: customerEmail,
+              subject: `Thank you for your order!`,
+              html: `
+                <h2>Order Confirmation</h2>
+                <p>We've received your payment. Here are your order details:</p>
+                <div style="border: 1px solid #eee; padding: 15px;">
+                  <pre style="font-family: sans-serif; white-space: pre-wrap;">${orderNote}</pre>
+                </div>
+                <p>If you have any questions, please contact us!</p>
+              `,
+            });
+
+            console.log("Customer email sent");
+          } else {
+            console.warn(`No customer email found for order ${orderId}`);
+          }
+
+          console.log(`Success: Notifications sent for Order ${orderId}`);
+        } catch (err: any) {
+          console.error(
+            `Webhook Processing Error for payment ${update.objectId}:`,
+            err.response?.data || err.message
+          );
+        }
       }
     }
+
+    return res.status(200).send("EVENT_RECEIVED");
+  } catch (err: any) {
+    console.error("Top-level webhook error:", err.response?.data || err.message);
+    return res.status(500).send("WEBHOOK_ERROR");
   }
 };
-
