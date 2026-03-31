@@ -16,14 +16,7 @@ interface CloverStockElement {
 interface CloverStockResponse {
   elements: CloverStockElement[];
 }
-// Nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+
 
 // const getCloverConfig = () => {
 //   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
@@ -361,6 +354,15 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     return res.status(200).send(event.verificationCode);
   }
 
+  // Nodemailer transporter
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+});
+
   try {
     const { token, merchantId } = getCloverConfig();
 
@@ -471,3 +473,4 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     return res.status(500).send("WEBHOOK_ERROR");
   }
 };
+
