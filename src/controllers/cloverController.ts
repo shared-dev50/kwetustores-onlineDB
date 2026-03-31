@@ -291,7 +291,7 @@ export const createCheckout = async (req: Request, res: Response) => {
         name: "Shipping Fee",
         unitQty: totalItemsCount, 
         price: 700, 
-        note: `Shipping for ${totalItemsCount} items @ $7.00 each`,
+        note: address
       });
     }
 
@@ -355,19 +355,15 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
   try {
     const { token, merchantId } = getCloverConfig();
 
-  const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // Use SSL
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  // Add a timeout so it doesn't hang forever
-  connectionTimeout: 10000, 
-  greetingTimeout: 10000,
-});
-
+ const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    debug: true,
+    logger: true,
+  });
     // 3. Get the Order ID from the payment
     const paymentId = event.id;
     const paymentResponse = await axios.get(
