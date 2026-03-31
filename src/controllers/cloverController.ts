@@ -355,14 +355,18 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
   try {
     const { token, merchantId } = getCloverConfig();
 
-    // 2. Transporter (Always inside the try/catch)
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+  const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Use SSL
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+  // Add a timeout so it doesn't hang forever
+  connectionTimeout: 10000, 
+  greetingTimeout: 10000,
+});
 
     // 3. Get the Order ID from the payment
     const paymentId = event.id;
@@ -380,13 +384,21 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
-    const orderData = cloverOrder.data;
-    const orderNote = orderData.note || "No address provided";
-    
-    // IMPROVED CUSTOMER SEARCH
-    // Try to get email from the Order, then the Payment, then fallback
-    let buyerEmail = orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email 
-                     || paymentResponse.data.receipt_email;
+   // 1. Check Order Note
+   const orderData = cloverOrder.data;
+let orderNote = orderData.note;
+
+// 2. Fallback: Check Line Item Notes (Common in Clover Sandbox)
+if (!orderNote || orderNote === "No address provided") {
+  const firstItem = orderData.lineItems?.elements?.[0];
+  orderNote = firstItem?.note || "No address found in Order or Line Items";
+}
+
+// 3. Buyer Email Fallback
+// If the customer isn't linked to the order, check the payment's receipt email
+const buyerEmail = 
+  orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email || 
+  paymentResponse.data.receiptEmail; // Note: it's receiptEmail (no underscore) in some API versions
 
     console.log(`🔍 Order Note found: ${orderNote.substring(0, 20)}...`);
     console.log(`🔍 Buyer Email identified: ${buyerEmail || "NONE FOUND"}`);
