@@ -361,13 +361,12 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     return res.status(200).send(event.verificationCode);
   }
 
-  // 2. ACKNOWLEDGE RECEIPT (Stops Clover from retrying)
+  // 2. ACKNOWLEDGE RECEIPT 
   res.status(200).send("EVENT_RECEIVED");
 
   console.log("📩 Webhook Received. Full Body:", JSON.stringify(event, null, 2));
 
   // 3. EXTRACT THE ORDER ID
-  // Clover Sandbox often nests data inside 'merchants' or 'data'
   const merchantId = Object.keys(event.merchants || {})[0];
   const updates = event.merchants?.[merchantId];
 
@@ -383,8 +382,8 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       console.log(`🚀 Processing Success for Order: ${orderId}`);
 
       try {
-        // --- STEP A: FETCH FULL ORDER FROM CLOVER ---
-        // We use apisandbox for testing. Toggle to api.clover.com for production.
+        // FETCH FULL ORDER FROM CLOVER
+
         const cloverOrder = await axios.get(
           // `https://api.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers`,
           `https://apisandbox.dev.clover.com/v3/merchants/${process.env.CLOVER_MERCHANT_ID}/orders/${orderId}?expand=customers,lineItems`,
@@ -398,17 +397,16 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
         const orderData = cloverOrder.data;
         const orderNote = orderData.note || "No specific delivery instructions provided.";
         
-        // Extract Email (safely navigating the nested Clover array)
         const customerEmail = 
           orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email;
 
         console.log(`📧 Found Customer Email: ${customerEmail || "Not Found"}`);
 
-        // --- STEP B: TEST TRANSPORTER ---
+        // TEST TRANSPORTER
         await transporter.verify();
         console.log("🔗 SMTP Connection Verified.");
 
-        // --- STEP C: NOTIFY MERCHANT (YOU) ---
+        // NOTIFY MERCHANT
         const merchantMail = await transporter.sendMail({
           from: `"Kwetu Order System" <${process.env.EMAIL_USER}>`,
           to: process.env.MERCHANT_NOTIFICATION_EMAIL,
@@ -428,7 +426,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
         });
         console.log("✅ Merchant Notification Sent:", merchantMail.messageId);
 
-        // --- STEP D: NOTIFY BUYER ---
+        // NOTIFY BUYER
         if (customerEmail) {
           const buyerMail = await transporter.sendMail({
             from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
