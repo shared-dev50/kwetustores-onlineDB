@@ -365,7 +365,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const buyerEmail =
       paymentResponse.data.metadata?.buyerEmail || // <-- new: metadata from checkout
       orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email ||
-      "youremail@example.com"; // <-- fallback for testing only
+      "matog50@hotmail.com"; // <-- fallback for testing only
 
     console.log(`🔍 Order Note: ${orderNote.substring(0, 50)}...`);
     console.log(`🔍 Buyer Email: ${buyerEmail}`);
