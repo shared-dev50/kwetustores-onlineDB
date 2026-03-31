@@ -381,20 +381,21 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     );
 
    // 1. Check Order Note
-   const orderData = cloverOrder.data;
-let orderNote = orderData.note;
+const orderData = cloverOrder.data;
 
-// 2. Fallback: Check Line Item Notes (Common in Clover Sandbox)
+// 1. Use 'let' so we can change this value if it's empty
+let orderNote = paymentResponse.data.note || orderData.note || "No address provided";
+
+// 2. Fallback: Check Line Item Notes
 if (!orderNote || orderNote === "No address provided") {
   const firstItem = orderData.lineItems?.elements?.[0];
+  
   orderNote = firstItem?.note || "No address found in Order or Line Items";
 }
-
 // 3. Buyer Email Fallback
 // If the customer isn't linked to the order, check the payment's receipt email
-const buyerEmail = 
-  orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email || 
-  paymentResponse.data.receiptEmail; // Note: it's receiptEmail (no underscore) in some API versions
+const buyerEmail = paymentResponse.data.receipt_email || 
+                   orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email;
 
     console.log(`🔍 Order Note found: ${orderNote.substring(0, 20)}...`);
     console.log(`🔍 Buyer Email identified: ${buyerEmail || "NONE FOUND"}`);
