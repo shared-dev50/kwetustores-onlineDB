@@ -296,7 +296,7 @@ FULL NAME: ${customer.firstName} ${customer.lastName}
           phoneNumber: customer.phoneNumber,
         },
         shoppingCart: { lineItems },
-        note: address,
+        note: finalCloverNote,
       metadata: {
           orderType: orderType,
           customerEmail: customer.email
@@ -391,22 +391,20 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     let orderNote = uniqueNotes.length > 0 ? uniqueNotes[0] : "";
 
     // 6. FALLBACK PARSING
-    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
-    const phoneMatch = orderNote.match(/PHONE:\s*([^\s,]+)/i);
-    const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r|]+)/i);
+// Match the labels in your finalCloverNote exactly
+const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
+const phoneMatch = orderNote.match(/CUSTOMER PHONE:\s*([^\s,]+)/i);
+const nameMatch = orderNote.match(/CUSTOMER NAME:\s*([^\n\r|]+)/i);
 
-    // If Note is empty, pull from Clover's expanded Customer object
-    const cloverCust = orderData.customers?.elements?.[0];
-
-    const buyerEmail = emailMatch?.[1]?.trim() || cloverCust?.emailAddresses?.[0]?.email || "Unknown";
-    const buyerPhone = phoneMatch?.[1]?.trim() || cloverCust?.phoneNumbers?.[0]?.phoneNumber || "N/A";
-    
-    let buyerName = "Customer";
-    if (nameMatch?.[1]) {
-      buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
-    } else if (cloverCust) {
-      buyerName = `${cloverCust.firstName || ""} ${cloverCust.lastName || ""}`.trim();
-    }
+// Fallbacks if the Note is still being weird
+const buyerEmail = emailMatch?.[1]?.trim() || orderData.customers?.elements?.[0]?.emailAddresses?.[0]?.email || null;
+const buyerPhone = phoneMatch?.[1]?.trim() || orderData.customers?.elements?.[0]?.phoneNumbers?.[0]?.phoneNumber || "N/A";
+const buyerName = nameMatch?.[1]?.trim() || (orderData.customers?.elements?.[0] ? `${orderData.customers.elements[0].firstName} ${orderData.customers.elements[0].lastName}` : "Martin Githinji");
+    // if (nameMatch?.[1]) {
+    //   buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
+    // } else if (cloverCust) {
+    //   buyerName = `${cloverCust.firstName || ""} ${cloverCust.lastName || ""}`.trim();
+    // }
 
     // Determine Pickup vs Delivery even if note is empty
     const isPickup = orderNote.toUpperCase().includes("PICKUP") || orderNote === "";
