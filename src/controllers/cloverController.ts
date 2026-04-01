@@ -18,23 +18,6 @@ interface CloverStockResponse {
   elements: CloverStockElement[];
 }
 
-
-// const getCloverConfig = () => {
-//   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
-//   const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
-//   const baseUrl = process.env.CLOVER_BASE_URL?.trim();
-
-//   if (!token || !merchantId || !baseUrl) {
-//     throw new Error("Missing Clover ENV variables");
-//   }
-
-//   return {
-//     token,
-//     merchantId,
-//     baseUrl: baseUrl.replace(/\/$/, ""),
-//   };
-// };
-
 const getCloverConfig = () => {
   const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
   const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
@@ -287,11 +270,9 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
       unitQty: item.quantity,
       price: Math.round(item.product.price * 100),
 
-      // Attach the note ONLY to the first real item as fallback
       ...(index === 0 ? { note: finalCloverNote } : {}),
     }));
 
-    // Optional shipping line
     if (orderType === "DELIVERY" && totalItemsCount > 0) {
       lineItems.push({
         id: "71CZGC2X5GRT2",
@@ -367,7 +348,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       return res.status(200).send("OK");
     }
 
-    // 2. Fetch Order Data (Note Hunt)
+    // 2. Fetch Order Data 
     const paymentResponse = await axios.get(
       `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -383,7 +364,6 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     );
     const orderData = orderResponse.data;
 
-    // 3. Parsing Logic (The part that finally works!)
     const rawNotes = [
       orderData.note,
       paymentData.note,
@@ -403,7 +383,6 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
     const totalAmount = (orderData.total || 0) / 100;
 
-    // 4. THE BLOCKER PATTERN: Initialize Transporter inside the flow
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
       port: 465,
@@ -488,7 +467,7 @@ ${orderNote}
     });
     console.log("✅ Merchant Email Status: ACCEPTED", merchantRes.messageId);
 
-    // 6. SEND BUYER EMAIL & AWAIT
+    // SEND BUYER EMAIL & AWAIT
     if (buyerEmail && buyerEmail !== "Unknown") {
       console.log("📨 BLOCKER 2: Sending Buyer Receipt...");
       const buyerRes = await transporter.sendMail({
@@ -561,12 +540,10 @@ ${orderNote}
       console.log("✅ Buyer Email Status: ACCEPTED", buyerRes.messageId);
     }
 
-    // 7. FINAL RELEASE: Only now tell Clover we are done
     return res.status(200).send("SUCCESS");
 
   } catch (err: any) {
-    console.error("❌ Webhook Processing Failed:", err.message);
-    // Return 200 so Clover stops retrying while you debug
+    console.error("Webhook Processing Failed:", err.message);
     return res.status(200).send("ERROR_LOGGED");
   }
 };
