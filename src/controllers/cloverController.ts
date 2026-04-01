@@ -342,12 +342,14 @@ const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 465,
   secure: true,
+  family: 4, 
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_PASS,
   },
+  debug: true,
+  logger:true,
   // This 'family' property is what stops the ENETUNREACH error
-  family: 4, 
 } as TransportOptions);
 
     const merchantId = process.env.CLOVER_MERCHANT_ID;
@@ -397,29 +399,26 @@ const transporter = nodemailer.createTransport({
     console.log("📝 Note Found:", rawNote);
     console.log("✅ Parsed Data:", { buyerEmail, buyerPhone, buyerName });
 
-    // 7. Merchant Email
-    await transporter.sendMail({
-      from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
+ // 7. Send Merchant Notification Email
+    console.log("📨 Attempting to send Merchant Email...");
+    const merchantRes = await transporter.sendMail({
+      from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER: KES ${orderData.total / 100} (${orderId})`,
-      html: `
-        <h2>Order Received!</h2>
-        <p><b>Name:</b> ${buyerName}</p>
-        <p><b>Email:</b> ${buyerEmail || "Not Found"}</p>
-        <p><b>Phone:</b> ${buyerPhone}</p>
-        <p><b>Note:</b> ${rawNote}</p>
-      `,
+      subject: `🚨 NEW ORDER - KES ${orderData.totalAmount} (${orderId})`,
+      html: `<h3>New Order from ${buyerName}</h3><p>${orderData.note}</p>`,
     });
+    console.log("✅ Merchant Email Status:", merchantRes.accepted.length > 0 ? "ACCEPTED" : "REJECTED");
 
-    // 8. Buyer Email (Only if we found the address)
+    // 8. Send Customer Receipt
     if (buyerEmail) {
-      await transporter.sendMail({
+      console.log("📨 Attempting to send Buyer Email to:", buyerEmail);
+      const buyerRes = await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
         to: buyerEmail,
-        subject: `Your Kwetu Stores Order Confirmation`,
-        html: `<p>Hi ${buyerName}, we've received your order <b>${orderId}</b>!</p>`,
+        subject: `Your Kwetu Stores Order - Confirmation`,
+        html: `<p>Hi ${buyerName}, we received your order!</p>`,
       });
-      console.log("✅ Emails sent to Merchant and Buyer");
+      console.log("✅ Buyer Email Status:", buyerRes.accepted.length > 0 ? "ACCEPTED" : "REJECTED");
     }
 
     return res.status(200).send("SUCCESS");
