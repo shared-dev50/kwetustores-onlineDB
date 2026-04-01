@@ -390,32 +390,40 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       orderNote = orderData.lineItems.elements[0].note;
     }
 
-    // 6. Regex to pull data from your custom Note string
-    const emailMatch = orderNote.match(/EMAIL:\s*([^\s|]+)/i);
-    const phoneMatch = orderNote.match(/PHONE:\s*([^\s|]+)/i);
+    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s]+)/i);
+    const phoneMatch = orderNote.match(/PHONE:\s*([^\s]+)/i);
+    const nameMatch = orderNote.match(/FULL NAME:\s*(.*)/i); 
 
-    const buyerEmail = paymentData.receipt_email || emailMatch?.[1] || null;
-    const buyerPhone = phoneMatch?.[1] || "N/A";
-    const totalAmount = orderData.total / 100; // Convert cents to KES
+    const buyerEmail = paymentData.receipt_email || emailMatch?.[1]?.trim() || null;
+    const buyerPhone = phoneMatch?.[1]?.trim() || "N/A";
+    const buyerName = nameMatch?.[1]?.trim() || "Customer";
+    
+    const totalAmount = orderData.total / 100;
+
+    console.log("Parsed Data -> Email:", buyerEmail, "Phone:", buyerPhone, "Name:", buyerName);
 
     // 7. Send Merchant Notification Email
+// 7. Send Merchant Notification Email
     await transporter.sendMail({
       from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - KES ${totalAmount} (${orderId})`,
+      subject: `🚨 NEW ORDER - $ ${totalAmount} - ${buyerName}`,
       html: `
-        <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px;">
-          <h2 style="color: #2e7d32;">New Payment Received!</h2>
-          <p><b>Order ID:</b> ${orderId}</p>
-          <p><b>Amount:</b> KES ${totalAmount}</p>
-          <p><b>Customer Email:</b> ${buyerEmail || "Unknown"}</p>
-          <p><b>Customer Phone:</b> ${buyerPhone}</p>
-          <p><b>Note/Address:</b></p>
-          <blockquote style="background: #f9f9f9; padding: 10px;">${orderNote}</blockquote>
+        <div style="font-family: sans-serif; border: 1px solid #000; padding: 20px; max-width: 600px;">
+          <h2 style="color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 10px;">New Delivery Order!</h2>
+          <p><strong>Customer:</strong> ${buyerName}</p>
+          <p><strong>Email:</strong> ${buyerEmail || "Not Found"}</p>
+          <p><strong>Phone:</strong> ${buyerPhone}</p>
+          <p><strong>Amount Paid:</strong> $ ${totalAmount}</p>
+          <hr />
+          <p><strong>Shipping Address / Full Note:</strong></p>
+          <div style="background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap;">
+            ${orderNote}
+          </div>
           <br/>
           <a href="https://sandbox.clover.com/manage/m/${merchantId}/orders/${orderId}" 
-             style="background: #000; color: #fff; padding: 10px 20px; text-decoration: none;">
-             View in Clover Dashboard
+             style="display: inline-block; background: #000; color: #fff; padding: 12px 25px; text-decoration: none; font-weight: bold;">
+             Open in Clover Dashboard
           </a>
         </div>
       `,
@@ -428,7 +436,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
         to: buyerEmail,
         subject: `Your Kwetu Stores Order - Confirmation`,
         html: `<h3>Thank you for shopping with Kwetu Stores!</h3>
-               <p>We've received your payment of KES ${totalAmount}.</p>
+               <p>We've received your payment of $ ${totalAmount}.</p>
                <p>Order ID: ${orderId}</p>
                <p>We are preparing your items for delivery.</p>`,
       });
