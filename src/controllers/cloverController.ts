@@ -297,9 +297,9 @@ FULL NAME: ${customer.firstName} ${customer.lastName}
         },
         shoppingCart: { lineItems },
         note: address,
-        metadata: {
-          buyerEmail: customer.email, 
-          address: address,           
+      metadata: {
+          orderType: orderType,
+          customerEmail: customer.email
         },
         successUrl: `${frontendUrl}/success`,
         cancelUrl: `${frontendUrl}/cancel`,
@@ -376,51 +376,40 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     // 5. THE NOTE HUNT (Address, Email, Phone extraction)
     // 5. THE SMART NOTE HUNT
    // 5. THE ULTIMATE NOTE & DATA HUNT
+    // 5. THE ULTIMATE HUNT
     const rawNotes = [
       orderData.note,
       paymentData.note,
-      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || []),
-      // New: Check Clover's internal metadata if available
       event.note,
-      paymentData.externalPaymentId 
+      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || [])
     ];
 
     const uniqueNotes = [...new Set(
-      rawNotes
-        .filter(n => n && typeof n === 'string' && n.trim() !== "")
-        .map(n => n.trim())
+      rawNotes.filter(n => n && typeof n === 'string' && n.trim() !== "").map(n => n.trim())
     )];
 
     let orderNote = uniqueNotes.length > 0 ? uniqueNotes[0] : "";
-    
-    // 6. SMART PARSING (With Fallbacks to Clover's official Customer object)
- // 6. ULTIMATE DATA PARSING (Regex + Clover Metadata + Clover Customer)
+
+    // 6. FALLBACK PARSING
     const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
     const phoneMatch = orderNote.match(/PHONE:\s*([^\s,]+)/i);
     const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r|]+)/i);
 
-    // Try parsing the metadata if the note fails
-    // Clover usually puts metadata in paymentData.externalPaymentId or orderData.clientInfo
-    const metadata = paymentData.externalPaymentId ? JSON.parse(paymentData.externalPaymentId) : {};
+    // If Note is empty, pull from Clover's expanded Customer object
+    const cloverCust = orderData.customers?.elements?.[0];
 
-    const buyerEmail = emailMatch?.[1]?.trim() || 
-                       metadata.buyerEmail || 
-                       orderData.customers?.elements?.[0]?.emailAddresses?.[0]?.email || 
-                       null;
-
-    const buyerPhone = phoneMatch?.[1]?.trim() || 
-                       orderData.customers?.elements?.[0]?.phoneNumbers?.[0]?.phoneNumber || 
-                       "N/A";
-
+    const buyerEmail = emailMatch?.[1]?.trim() || cloverCust?.emailAddresses?.[0]?.email || "Unknown";
+    const buyerPhone = phoneMatch?.[1]?.trim() || cloverCust?.phoneNumbers?.[0]?.phoneNumber || "N/A";
+    
     let buyerName = "Customer";
     if (nameMatch?.[1]) {
       buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
-    } else {
-      const cust = orderData.customers?.elements?.[0];
-      buyerName = cust ? `${cust.firstName || ""} ${cust.lastName || ""}`.trim() : "Customer";
+    } else if (cloverCust) {
+      buyerName = `${cloverCust.firstName || ""} ${cloverCust.lastName || ""}`.trim();
     }
 
-  const isPickup = orderNote.toUpperCase().includes("PICKUP AT STORE") || orderNote.toUpperCase().includes("ORDER TYPE: PICKUP");
+    // Determine Pickup vs Delivery even if note is empty
+    const isPickup = orderNote.toUpperCase().includes("PICKUP") || orderNote === "";
     
     // If we still have no note text, at least tell the staff it's a Pickup
     if (!orderNote) orderNote = isPickup ? "ORDER TYPE: PICKUP (No additional notes)" : "No customer notes found.";
