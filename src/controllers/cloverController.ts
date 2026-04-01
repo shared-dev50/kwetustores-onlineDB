@@ -412,7 +412,11 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
       ),
     ];
 
-    let orderNote = uniqueNotes.join("\n\n---\n\n") || "";
+let orderNote = uniqueNotes.join("\n\n---\n\n") || "";
+
+console.log("🧾 RAW NOTES:", rawNotes);
+console.log("🧾 UNIQUE NOTES:", uniqueNotes);
+console.log("🧾 FINAL orderNote:", orderNote);
 
     // 6. Parse note safely
     const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.+)/i);
