@@ -298,7 +298,6 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 700,
-        note: finalCloverNote, // <-- same note here too
       });
     }
 
@@ -313,8 +312,6 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
         },
         shoppingCart: { lineItems },
 
-        // keep this too, but don't depend on it
-        note: finalCloverNote,
 
         metadata: {
           orderType,
