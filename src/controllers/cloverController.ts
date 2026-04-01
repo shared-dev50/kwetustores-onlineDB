@@ -340,18 +340,18 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
   try {
     // 2. Simplest Transporter (The one that worked first)
 const transporter = nodemailer.createTransport({
-  service: "gmail",
   host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
+  port: 465,
+  secure: true,
   auth: {
+    type: "OAuth2",
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_PASS,
   },
   debug: true,
   logger:true,
   // This 'family' property is what stops the ENETUNREACH error
-});
+} as TransportOptions);
 
     const merchantId = process.env.CLOVER_MERCHANT_ID;
     const token = process.env.CLOVER_SECRET;
