@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import type { Request, Response } from "express";
-import nodemailer from "nodemailer";
+import nodemailer, { type TransportOptions } from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
 
@@ -338,13 +338,17 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
 
   try {
     // 2. Simplest Transporter (The one that worked first)
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_PASS,
-      },
-    });
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.GOOGLE_PASS,
+  },
+  // This 'family' property is what stops the ENETUNREACH error
+  family: 4, 
+} as TransportOptions);
 
     const merchantId = process.env.CLOVER_MERCHANT_ID;
     const token = process.env.CLOVER_SECRET;
