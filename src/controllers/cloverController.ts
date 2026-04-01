@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import type { Request, Response } from "express";
-import nodemailer, { type TransportOptions } from "nodemailer";
+import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
 
@@ -344,14 +344,14 @@ const transporter = nodemailer.createTransport({
   port: 465,
   secure: true,
   auth: {
-    type: "OAuth2",
+    family: 4, 
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_PASS,
   },
   debug: true,
   logger:true,
-  // This 'family' property is what stops the ENETUNREACH error
-} as TransportOptions);
+
+} as any);
 
     const merchantId = process.env.CLOVER_MERCHANT_ID;
     const token = process.env.CLOVER_SECRET;
@@ -375,38 +375,37 @@ const transporter = nodemailer.createTransport({
     const orderData = orderResponse.data;
 
     // 5. THE NOTE HUNT: Search 3 different places for that text string
-    let rawNote = orderData.note || ""; 
+  let orderNote = orderData.note || ""; 
     
-    // If Order Note is empty, check Line Items (Common for Ecommerce API)
-    if (!rawNote && orderData.lineItems?.elements) {
-      rawNote = orderData.lineItems.elements
+    if (!orderNote && orderData.lineItems?.elements) {
+      orderNote = orderData.lineItems.elements
         .filter((li: any) => li.note)
         .map((li: any) => li.note)
         .join(" ");
     }
     
+    if (!orderNote) orderNote = paymentData.note || "No note found.";
     // Still empty? Check the payment note itself
-    if (!rawNote) rawNote = paymentData.note || "";
 
     // 6. Extraction (Matches: CUSTOMER EMAIL: matog50@hotmail.com)
-    const emailMatch = rawNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
-    const phoneMatch = rawNote.match(/PHONE:\s*([^\s,]+)/i);
-    const nameMatch = rawNote.match(/FULL NAME:\s*(.*)/i);
+    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
+    const phoneMatch = orderNote.match(/PHONE:\s*([^\s,]+)/i);
+    const nameMatch = orderNote.match(/FULL NAME:\s*(.*)/i);
 
     const buyerEmail = emailMatch?.[1]?.trim() || null;
     const buyerPhone = phoneMatch?.[1]?.trim() || "N/A";
     const buyerName = nameMatch?.[1]?.trim() || "Customer";
 
-    console.log("📝 Note Found:", rawNote);
+    console.log("📝 Note Found:", orderNote);
     console.log("✅ Parsed Data:", { buyerEmail, buyerPhone, buyerName });
 
  // 7. Send Merchant Notification Email
-    console.log("📨 Attempting to send Merchant Email...");
+   console.log("📨 Attempting to send Merchant Email...");
     const merchantRes = await transporter.sendMail({
       from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - KES ${orderData.totalAmount} (${orderId})`,
-      html: `<h3>New Order from ${buyerName}</h3><p>${orderData.note}</p>`,
+      subject: `🚨 NEW ORDER - KES ${orderData.total / 100} (${orderId})`,
+      html: `<h3>New Order from ${buyerName}</h3><p>${orderNote}</p>`, // Use orderNote here!
     });
     console.log("✅ Merchant Email Status:", merchantRes.accepted.length > 0 ? "ACCEPTED" : "REJECTED");
 
