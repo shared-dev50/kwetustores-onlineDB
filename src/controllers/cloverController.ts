@@ -275,23 +275,17 @@ export const createCheckout = async (req: Request, res: Response) => {
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 700,
-        note: address,
       });
     }
 
 const finalCloverNote = `
 ORDER TYPE: ${orderType}
+${orderType === "DELIVERY" ? `SHIP TO: ${address}` : "PICKUP AT STORE"}
+
 CUSTOMER EMAIL: ${customer.email}
-CUSTOMER PHONE: ${customer.phoneNumber}
-CUSTOMER NAME: ${customer.firstName} ${customer.lastName}
-
-${address}
-
----
-ITEMS:
-${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
+PHONE: ${customer.phoneNumber}
+FULL NAME: ${customer.firstName} ${customer.lastName}
 `.trim();
-
     const checkoutResponse = await axios.post(
       "https://apisandbox.dev.clover.com/invoicingcheckoutservice/v1/checkouts",
       {
@@ -304,8 +298,8 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
         shoppingCart: { lineItems },
         note: finalCloverNote,
         metadata: {
-          buyerEmail: customer.email, // 👈 store buyer email
-          address: address,           // 👈 store address
+          buyerEmail: customer.email, 
+          address: address,           
         },
         successUrl: `${frontendUrl}/success`,
         cancelUrl: `${frontendUrl}/cancel`,
@@ -380,28 +374,47 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const orderData = orderResponse.data;
 
     // 5. THE NOTE HUNT (Address, Email, Phone extraction)
-    let orderNote = orderData.note || "";
-    
-    // Check Line Items if main note is empty
-    if (!orderNote && orderData.lineItems?.elements) {
-      orderNote = orderData.lineItems.elements
-        .filter((li: any) => li.note)
-        .map((li: any) => li.note)
-        .join(" ");
-    }
-    
-    // Check Payment note as last resort
-    if (!orderNote) orderNote = paymentData.note || "No customer notes found.";
+    // 5. THE SMART NOTE HUNT
+   // 5. THE ULTIMATE NOTE & DATA HUNT
+    const rawNotes = [
+      orderData.note,
+      paymentData.note,
+      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || []),
+      // New: Check Clover's internal metadata if available
+      event.note,
+      paymentData.externalPaymentId 
+    ];
 
-    // 6. Data Parsing
+    const uniqueNotes = [...new Set(
+      rawNotes
+        .filter(n => n && typeof n === 'string' && n.trim() !== "")
+        .map(n => n.trim())
+    )];
+
+    let orderNote = uniqueNotes.length > 0 ? uniqueNotes[0] : "";
+    
+    // 6. SMART PARSING (With Fallbacks to Clover's official Customer object)
     const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
     const phoneMatch = orderNote.match(/PHONE:\s*([^\s,]+)/i);
-    const nameMatch = orderNote.match(/FULL NAME:\s*(.*)/i);
+    const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r|]+)/i);
 
-    const buyerEmail = paymentData.receipt_email || emailMatch?.[1]?.trim() || null;
-    const buyerPhone = phoneMatch?.[1]?.trim() || "N/A";
-    // Clean "ORDER TYPE" out of the name if it's there
-    const buyerName = nameMatch?.[1]?.split('ORDER TYPE')[0]?.trim() || "Customer";
+    // FALLBACK LOGIC: If regex fails, use the official Clover Customer object we expanded in Step 4
+    const cloverCustomer = orderData.customers?.elements?.[0];
+
+    const buyerEmail = emailMatch?.[1]?.trim() || cloverCustomer?.emailAddresses?.[0]?.email || null;
+    const buyerPhone = phoneMatch?.[1]?.trim() || cloverCustomer?.phoneNumbers?.[0]?.phoneNumber || "N/A";
+    
+    let buyerName = "Customer";
+    if (nameMatch?.[1]) {
+      buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
+    } else if (cloverCustomer) {
+      buyerName = `${cloverCustomer.firstName || ""} ${cloverCustomer.lastName || ""}`.trim() || "Customer";
+    }
+
+  const isPickup = orderNote.toUpperCase().includes("PICKUP AT STORE") || orderNote.toUpperCase().includes("ORDER TYPE: PICKUP");
+    
+    // If we still have no note text, at least tell the staff it's a Pickup
+    if (!orderNote) orderNote = isPickup ? "ORDER TYPE: PICKUP (No additional notes)" : "No customer notes found.";
     const totalAmount = orderData.total / 100;
 
     console.log("📝 Note Found:", orderNote);
@@ -412,14 +425,14 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const merchantRes = await transporter.sendMail({
       from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - KES ${totalAmount} (${orderId})`,
+      subject: `🚨 NEW ORDER - $ ${totalAmount} (${orderId})`,
       html: `
         <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px;">
           <h2 style="color: #2e7d32;">New Payment Received!</h2>
           <p><b>Customer:</b> ${buyerName}</p>
           <p><b>Email:</b> ${buyerEmail || "Unknown"}</p>
           <p><b>Phone:</b> ${buyerPhone}</p>
-          <p><b>Total:</b> KES ${totalAmount}</p>
+          <p><b>Total:</b> $ ${totalAmount}</p>
           <hr />
           <p><b>Order Note / Address:</b></p>
           <pre style="background: #f9f9f9; padding: 10px; white-space: pre-wrap;">${orderNote}</pre>
@@ -429,8 +442,16 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     console.log("✅ Merchant Email Status: ACCEPTED", merchantRes.messageId);
 
     // 8. Send Customer Receipt
+    // 8. Send Customer Receipt
     if (buyerEmail && buyerEmail !== "Unknown") {
-      console.log("📨 Attempting to send Buyer Email to:", buyerEmail);
+      // Detect Order Type from the note or default to DELIVERY
+      const isPickup = orderNote.toUpperCase().includes("ORDER TYPE: PICKUP");
+      const statusMessage = isPickup 
+        ? "We are preparing your items for pickup at our store." 
+        : "We are preparing your items for delivery.";
+
+      console.log(`📨 Sending ${isPickup ? 'PICKUP' : 'DELIVERY'} email to:`, buyerEmail);
+
       const buyerRes = await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
         to: buyerEmail,
@@ -438,9 +459,10 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
         html: `
           <div style="font-family: sans-serif; padding: 20px;">
             <h3>Hi ${buyerName},</h3>
-            <p>Thank you for your order! We've received your payment of <b>KES ${totalAmount}</b>.</p>
+            <p>Thank you for your order! We've received your payment of <b>$ ${totalAmount}</b>.</p>
             <p><b>Order ID:</b> ${orderId}</p>
-            <p>We are processing your delivery now.</p>
+            <p>${statusMessage}</p>
+            ${isPickup ? '<p><i>We will notify you as soon as it is ready for collection.</i></p>' : ''}
           </div>
         `,
       });
@@ -458,50 +480,3 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
 };
 
 
-export const testEmail = async (req: Request, res: Response) => {
-  // 1. Manual Check: Log these to your terminal to see if they are actually loading
-  console.log("DEBUG - EMAIL_USER:", process.env.EMAIL_USER);
-  console.log("DEBUG - GOOGLE_PASS:", process.env.GOOGLE_PASS ? "Loaded (HIDDEN)" : "NOT LOADED");
-
-  try {
-    // 2. Define the transporter inside the function
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_PASS, 
-      },
-    });
-
-    // 3. Send the Mail
-    const info = await transporter.sendMail({
-      from: `"Kwetu Test" <${process.env.EMAIL_USER}>`,
-      to: "matog50@hotmail.com",
-      subject: "Final Gmail SMTP Test 🚀",
-      html: `
-        <div style="font-family: sans-serif; padding: 20px;">
-          <h2>It's working!</h2>
-          <p>This test proves the Gmail SMTP is configured correctly for <b>Kwetu Stores</b>.</p>
-        </div>
-      `,
-    });
-
-    console.log("Message sent successfully: %s", info.messageId);
-
-    return res.json({ 
-      success: true, 
-      message: "Check your inbox!",
-      id: info.messageId 
-    });
-
-  } catch (err: any) {
-    console.error("Detailed SMTP Error:", err);
-
-    return res.status(500).json({
-      success: false,
-      message: "SMTP Connection Failed",
-      error: err.message,
-      code: err.code 
-    });
-  }
-};
