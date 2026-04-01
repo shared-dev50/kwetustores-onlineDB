@@ -333,122 +333,97 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
-  // 1. Clover Verification Handshake (Required for the dashboard to stay 'Active')
-  if (event.verificationCode) {
-    return res.status(200).send(event.verificationCode);
-  }
-
-  console.log("🚀 Clover Webhook received. Event ID:", event.id || event.objectId);
+  // 1. Handshake (Keep this!)
+  if (event.verificationCode) return res.status(200).send(event.verificationCode);
 
   try {
-    // 2. Setup the Inbuilt Transporter
+    // 2. Simplest Transporter (The one that worked first)
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_PASS, 
+        pass: process.env.GOOGLE_PASS,
       },
     });
 
     const merchantId = process.env.CLOVER_MERCHANT_ID;
     const token = process.env.CLOVER_SECRET;
-
-    // Clover Tip: objectId is usually the Payment ID in webhooks
     const paymentId = event.objectId || event.id;
 
-    if (!paymentId || event.type === "PING") {
-      return res.status(200).send("OK");
-    }
+    if (!paymentId || event.type === "PING") return res.status(200).send("OK");
 
-    // 3. Fetch Payment Details
+    // 3. Fetch Payment
     const paymentResponse = await axios.get(
       `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
-
     const paymentData = paymentResponse.data;
     const orderId = paymentData.order?.id || paymentData.orderRef?.id;
 
-    if (!orderId) {
-      console.log("⚠️ No Order ID found for payment:", paymentId);
-      return res.status(200).send("NO_ORDER");
-    }
-
-    // 4. Fetch Full Order (Expand to get Line Items & Customers)
+    // 4. Fetch Order (Expanded)
     const orderResponse = await axios.get(
       `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=lineItems,customers`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
-
     const orderData = orderResponse.data;
 
-    // 5. Extract Note (Where you stored Address/Email/Phone from the Frontend)
-    let orderNote = orderData.note || "No customer notes found.";
+    // 5. THE NOTE HUNT: Search 3 different places for that text string
+    let rawNote = orderData.note || ""; 
     
-    // Fallback: Check if note was attached to the first line item
-    if (!orderData.note && orderData.lineItems?.elements?.[0]?.note) {
-      orderNote = orderData.lineItems.elements[0].note;
+    // If Order Note is empty, check Line Items (Common for Ecommerce API)
+    if (!rawNote && orderData.lineItems?.elements) {
+      rawNote = orderData.lineItems.elements
+        .filter((li: any) => li.note)
+        .map((li: any) => li.note)
+        .join(" ");
     }
+    
+    // Still empty? Check the payment note itself
+    if (!rawNote) rawNote = paymentData.note || "";
 
-    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s]+)/i);
-    const phoneMatch = orderNote.match(/PHONE:\s*([^\s]+)/i);
-    const nameMatch = orderNote.match(/FULL NAME:\s*(.*)/i); 
+    // 6. Extraction (Matches: CUSTOMER EMAIL: matog50@hotmail.com)
+    const emailMatch = rawNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
+    const phoneMatch = rawNote.match(/PHONE:\s*([^\s,]+)/i);
+    const nameMatch = rawNote.match(/FULL NAME:\s*(.*)/i);
 
-    const buyerEmail = paymentData.receipt_email || emailMatch?.[1]?.trim() || null;
+    const buyerEmail = emailMatch?.[1]?.trim() || null;
     const buyerPhone = phoneMatch?.[1]?.trim() || "N/A";
     const buyerName = nameMatch?.[1]?.trim() || "Customer";
-    
-    const totalAmount = orderData.total / 100;
 
-    console.log("Parsed Data -> Email:", buyerEmail, "Phone:", buyerPhone, "Name:", buyerName);
+    console.log("📝 Note Found:", rawNote);
+    console.log("✅ Parsed Data:", { buyerEmail, buyerPhone, buyerName });
 
-    // 7. Send Merchant Notification Email
-// 7. Send Merchant Notification Email
+    // 7. Merchant Email
     await transporter.sendMail({
-      from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
+      from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - $ ${totalAmount} - ${buyerName}`,
+      subject: `🚨 NEW ORDER: KES ${orderData.total / 100} (${orderId})`,
       html: `
-        <div style="font-family: sans-serif; border: 1px solid #000; padding: 20px; max-width: 600px;">
-          <h2 style="color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 10px;">New Delivery Order!</h2>
-          <p><strong>Customer:</strong> ${buyerName}</p>
-          <p><strong>Email:</strong> ${buyerEmail || "Not Found"}</p>
-          <p><strong>Phone:</strong> ${buyerPhone}</p>
-          <p><strong>Amount Paid:</strong> $ ${totalAmount}</p>
-          <hr />
-          <p><strong>Shipping Address / Full Note:</strong></p>
-          <div style="background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap;">
-            ${orderNote}
-          </div>
-          <br/>
-          <a href="https://sandbox.clover.com/manage/m/${merchantId}/orders/${orderId}" 
-             style="display: inline-block; background: #000; color: #fff; padding: 12px 25px; text-decoration: none; font-weight: bold;">
-             Open in Clover Dashboard
-          </a>
-        </div>
+        <h2>Order Received!</h2>
+        <p><b>Name:</b> ${buyerName}</p>
+        <p><b>Email:</b> ${buyerEmail || "Not Found"}</p>
+        <p><b>Phone:</b> ${buyerPhone}</p>
+        <p><b>Note:</b> ${rawNote}</p>
       `,
     });
 
-    // 8. Send Customer Receipt (Only if email was found)
+    // 8. Buyer Email (Only if we found the address)
     if (buyerEmail) {
       await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
         to: buyerEmail,
-        subject: `Your Kwetu Stores Order - Confirmation`,
-        html: `<h3>Thank you for shopping with Kwetu Stores!</h3>
-               <p>We've received your payment of $ ${totalAmount}.</p>
-               <p>Order ID: ${orderId}</p>
-               <p>We are preparing your items for delivery.</p>`,
+        subject: `Your Kwetu Stores Order Confirmation`,
+        html: `<p>Hi ${buyerName}, we've received your order <b>${orderId}</b>!</p>`,
       });
-      console.log("✅ Emails dispatched successfully.");
+      console.log("✅ Emails sent to Merchant and Buyer");
     }
 
     return res.status(200).send("SUCCESS");
 
   } catch (err: any) {
-    // Log the error but return 200 to Clover to stop the retry-loop
-    console.error("❌ Webhook Processing Failed:", err.response?.data || err.message);
-    return res.status(200).send("ERROR_LOGGED");
+    console.error("❌ Webhook Error:", err.message);
+    // Returning 200 even on error prevents Clover from retrying a broken event forever
+    return res.status(200).send("ERROR_LOGGED"); 
   }
 };
 
