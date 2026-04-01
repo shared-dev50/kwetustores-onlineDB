@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
+import transporter from "../utils/transporter.js";
 
 export interface CloverInventoryResponse {
   elements: CloverItem[];
@@ -278,8 +279,16 @@ export const createCheckout = async (req: Request, res: Response) => {
       });
     }
 
-    const finalCloverNote = `
+const finalCloverNote = `
+ADDRESS:
 ${address}
+
+CUSTOMER EMAIL:
+${customer.email}
+
+CUSTOMER PHONE:
+${customer.phoneNumber}
+
 ---
 ITEMS:
 ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
@@ -362,26 +371,20 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     }
 
     // 6. Pull buyer email from metadata first, then fallback to customer
-    const buyerEmail =
-      paymentResponse.data.metadata?.buyerEmail || // <-- new: metadata from checkout
-      orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email ||
-      "matog50@hotmail.com"; // <-- fallback for testing only
+  const extractedEmailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.*)/i);
+const extractedEmail = extractedEmailMatch?.[1]?.trim();
+
+const buyerEmail =
+  paymentResponse.data.metadata?.buyerEmail ||
+  paymentResponse.data.receipt_email ||
+  orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email ||
+  extractedEmail ||
+  null;
 
     console.log(`🔍 Order Note: ${orderNote.substring(0, 50)}...`);
     console.log(`🔍 Buyer Email: ${buyerEmail}`);
 
     // 7. Configure transporter (Gmail or any SMTP)
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true, // SSL
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // app password recommended
-      },
-      debug: true,
-      logger: true,
-    });
 
     // 8. Send Merchant Email
     await transporter.sendMail({
