@@ -260,7 +260,10 @@ export const createCheckout = async (req: Request, res: Response) => {
       return res.status(500).json({ error: "Missing server configuration" });
     }
 
-    const totalItemsCount = items.reduce((acc: number, item: any) => acc + item.quantity, 0);
+    const totalItemsCount = items.reduce(
+      (acc: number, item: any) => acc + item.quantity,
+      0
+    );
 
     const lineItems = items.map((item: any) => ({
       name: item.product.name,
@@ -271,21 +274,28 @@ export const createCheckout = async (req: Request, res: Response) => {
     // Optional shipping line
     if (orderType === "DELIVERY" && totalItemsCount > 0) {
       lineItems.push({
-        id: "71CZGC2X5GRT2", // your shipping item
+        id: "71CZGC2X5GRT2",
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 700,
+        note: address || "No address provided", // <-- IMPORTANT fallback
       });
     }
 
-const finalCloverNote = `
+    const finalCloverNote = `
 ORDER TYPE: ${orderType}
-${orderType === "DELIVERY" ? `SHIP TO: ${address}` : "PICKUP AT STORE"}
-
 CUSTOMER EMAIL: ${customer.email}
-PHONE: ${customer.phoneNumber}
-FULL NAME: ${customer.firstName} ${customer.lastName}
-`.trim();
+CUSTOMER PHONE: ${customer.phoneNumber}
+CUSTOMER NAME: ${customer.firstName} ${customer.lastName}
+${orderType === "DELIVERY" ? `DELIVERY ADDRESS: ${address}` : "PICKUP AT STORE"}
+
+---
+ITEMS:
+${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
+    `.trim();
+
+    console.log("📝 Sending Clover Note:\n", finalCloverNote);
+
     const checkoutResponse = await axios.post(
       "https://apisandbox.dev.clover.com/invoicingcheckoutservice/v1/checkouts",
       {
@@ -297,9 +307,12 @@ FULL NAME: ${customer.firstName} ${customer.lastName}
         },
         shoppingCart: { lineItems },
         note: finalCloverNote,
-      metadata: {
-          orderType: orderType,
-          customerEmail: customer.email
+        metadata: {
+          orderType,
+          customerEmail: customer.email,
+          customerPhone: customer.phoneNumber,
+          customerName: `${customer.firstName} ${customer.lastName}`,
+          address: address || "",
         },
         successUrl: `${frontendUrl}/success`,
         cancelUrl: `${frontendUrl}/cancel`,
@@ -319,10 +332,14 @@ FULL NAME: ${customer.firstName} ${customer.lastName}
       checkoutUrl: checkoutResponse.data.href,
     });
   } catch (error: any) {
-    console.error("Checkout Error Details:", error.response?.data || error.message);
+    console.error(
+      "Checkout Error Details:",
+      error.response?.data || error.message
+    );
     res.status(500).json({ error: "Checkout failed" });
   }
 };
+
 
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
@@ -334,17 +351,15 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
 
   console.log("🚀 Clover Webhook received. Event ID:", event.id || event.objectId);
 
-  // 2. Setup Transporter OUTSIDE the try/catch for stability
-  // Using 'as any' to bypass TypeScript strictness on the 'family' property
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
     secure: true,
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.GOOGLE_PASS, // Your 16-character App Password
+      pass: process.env.GOOGLE_PASS,
     },
-    family: 4, // CRITICAL: Forces IPv4 to prevent ENETUNREACH in Kenya
+    family: 4,
     debug: true,
     logger: true,
   } as any);
@@ -366,6 +381,11 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const paymentData = paymentResponse.data;
     const orderId = paymentData.order?.id || paymentData.orderRef?.id;
 
+    if (!orderId) {
+      console.error("❌ No orderId found on payment");
+      return res.status(200).send("NO_ORDER_ID");
+    }
+
     // 4. Fetch Full Order
     const orderResponse = await axios.get(
       `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=lineItems,customers`,
@@ -373,80 +393,106 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     );
     const orderData = orderResponse.data;
 
-    // 5. THE NOTE HUNT (Address, Email, Phone extraction)
-    // 5. THE SMART NOTE HUNT
-   // 5. THE ULTIMATE NOTE & DATA HUNT
-    // 5. THE ULTIMATE HUNT
+    console.log("🧾 FULL ORDER DATA:", JSON.stringify(orderData, null, 2));
+    console.log("💳 FULL PAYMENT DATA:", JSON.stringify(paymentData, null, 2));
+
+    // 5. Gather all possible notes
     const rawNotes = [
       orderData.note,
       paymentData.note,
       event.note,
-      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || [])
+      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || []),
     ];
 
-    const uniqueNotes = [...new Set(
-      rawNotes.filter(n => n && typeof n === 'string' && n.trim() !== "").map(n => n.trim())
-    )];
+    const uniqueNotes = [
+      ...new Set(
+        rawNotes
+          .filter((n) => n && typeof n === "string" && n.trim() !== "")
+          .map((n) => n.trim())
+      ),
+    ];
 
-    let orderNote = uniqueNotes.length > 0 ? uniqueNotes[0] : "";
+    let orderNote = uniqueNotes.join("\n\n---\n\n") || "";
 
-    // 6. FALLBACK PARSING
-// Match the labels in your finalCloverNote exactly
-const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
-const phoneMatch = orderNote.match(/CUSTOMER PHONE:\s*([^\s,]+)/i);
-const nameMatch = orderNote.match(/CUSTOMER NAME:\s*([^\n\r|]+)/i);
+    // 6. Parse note safely
+    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.+)/i);
+    const phoneMatch = orderNote.match(/CUSTOMER PHONE:\s*(.+)/i);
+    const nameMatch = orderNote.match(/CUSTOMER NAME:\s*(.+)/i);
+    const addressMatch = orderNote.match(/DELIVERY ADDRESS:\s*(.+)/i);
+    const orderTypeMatch = orderNote.match(/ORDER TYPE:\s*(.+)/i);
 
-// Fallbacks if the Note is still being weird
-const buyerEmail = emailMatch?.[1]?.trim() || orderData.customers?.elements?.[0]?.emailAddresses?.[0]?.email || null;
-const buyerPhone = phoneMatch?.[1]?.trim() || orderData.customers?.elements?.[0]?.phoneNumbers?.[0]?.phoneNumber || "N/A";
-const buyerName = nameMatch?.[1]?.trim() || (orderData.customers?.elements?.[0] ? `${orderData.customers.elements[0].firstName} ${orderData.customers.elements[0].lastName}` : "Martin Githinji");
-    // if (nameMatch?.[1]) {
-    //   buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
-    // } else if (cloverCust) {
-    //   buyerName = `${cloverCust.firstName || ""} ${cloverCust.lastName || ""}`.trim();
-    // }
+    const cloverCust = orderData.customers?.elements?.[0];
 
-    // Determine Pickup vs Delivery even if note is empty
-    const isPickup = orderNote.toUpperCase().includes("PICKUP") || orderNote === "";
-    
-    // If we still have no note text, at least tell the staff it's a Pickup
-    if (!orderNote) orderNote = isPickup ? "ORDER TYPE: PICKUP (No additional notes)" : "No customer notes found.";
-    const totalAmount = orderData.total / 100;
+    const buyerEmail =
+      emailMatch?.[1]?.trim() ||
+      paymentData.receipt_email ||
+      cloverCust?.emailAddresses?.[0]?.email ||
+      null;
 
-    console.log("📝 Note Found:", orderNote);
-    console.log("✅ Parsed Data:", { buyerEmail, buyerPhone, buyerName });
+    const buyerPhone =
+      phoneMatch?.[1]?.trim() ||
+      cloverCust?.phoneNumbers?.[0]?.phoneNumber ||
+      "N/A";
+
+    const buyerName =
+      nameMatch?.[1]?.trim() ||
+      `${cloverCust?.firstName || ""} ${cloverCust?.lastName || ""}`.trim() ||
+      "Customer";
+
+    const deliveryAddress = addressMatch?.[1]?.trim() || "N/A";
+    const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
+
+    if (!orderNote) {
+      orderNote =
+        orderType === "PICKUP"
+          ? "ORDER TYPE: PICKUP (No additional notes)"
+          : "No customer notes found.";
+    }
+
+    const totalAmount = (orderData.total || 0) / 100;
+
+    console.log("📝 Final Note Used:", orderNote);
+    console.log("✅ Parsed Data:", {
+      buyerEmail,
+      buyerPhone,
+      buyerName,
+      deliveryAddress,
+      orderType,
+    });
 
     // 7. Send Merchant Notification
-    console.log("📨 Attempting to send Merchant Email...");
     const merchantRes = await transporter.sendMail({
       from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - $ ${totalAmount} (${orderId})`,
+      subject: `🚨 NEW ORDER - KES ${totalAmount} (${orderId})`,
       html: `
         <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px;">
           <h2 style="color: #2e7d32;">New Payment Received!</h2>
           <p><b>Customer:</b> ${buyerName}</p>
           <p><b>Email:</b> ${buyerEmail || "Unknown"}</p>
           <p><b>Phone:</b> ${buyerPhone}</p>
-          <p><b>Total:</b> $ ${totalAmount}</p>
+          <p><b>Order Type:</b> ${orderType}</p>
+          ${
+            orderType === "DELIVERY"
+              ? `<p><b>Address:</b> ${deliveryAddress}</p>`
+              : `<p><b>Pickup:</b> Customer will collect in store</p>`
+          }
+          <p><b>Total:</b> KES ${totalAmount}</p>
           <hr />
-          <p><b>Order Note / Address:</b></p>
+          <p><b>Full Clover Note:</b></p>
           <pre style="background: #f9f9f9; padding: 10px; white-space: pre-wrap;">${orderNote}</pre>
         </div>
       `,
     });
-    console.log("✅ Merchant Email Status: ACCEPTED", merchantRes.messageId);
+
+    console.log("✅ Merchant Email Status:", merchantRes.messageId);
 
     // 8. Send Customer Receipt
-    // 8. Send Customer Receipt
-    if (buyerEmail && buyerEmail !== "Unknown") {
-      // Detect Order Type from the note or default to DELIVERY
-      const isPickup = orderNote.toUpperCase().includes("ORDER TYPE: PICKUP");
-      const statusMessage = isPickup 
-        ? "We are preparing your items for pickup at our store." 
-        : "We are preparing your items for delivery.";
-
-      console.log(`📨 Sending ${isPickup ? 'PICKUP' : 'DELIVERY'} email to:`, buyerEmail);
+    if (buyerEmail) {
+      const statusMessage =
+        orderType === "PICKUP"
+          ? "We are preparing your items for pickup at our store."
+          : "We are preparing your items for delivery.";
 
       const buyerRes = await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
@@ -455,24 +501,26 @@ const buyerName = nameMatch?.[1]?.trim() || (orderData.customers?.elements?.[0] 
         html: `
           <div style="font-family: sans-serif; padding: 20px;">
             <h3>Hi ${buyerName},</h3>
-            <p>Thank you for your order! We've received your payment of <b>$ ${totalAmount}</b>.</p>
+            <p>Thank you for your order! We've received your payment of <b>KES ${totalAmount}</b>.</p>
             <p><b>Order ID:</b> ${orderId}</p>
+            <p><b>Order Type:</b> ${orderType}</p>
+            ${orderType === "DELIVERY" ? `<p><b>Delivery Address:</b> ${deliveryAddress}</p>` : ""}
             <p>${statusMessage}</p>
-            ${isPickup ? '<p><i>We will notify you as soon as it is ready for collection.</i></p>' : ''}
+            ${
+              orderType === "PICKUP"
+                ? "<p><i>We will notify you as soon as it is ready for collection.</i></p>"
+                : ""
+            }
           </div>
         `,
       });
-      console.log("✅ Buyer Email Status: ACCEPTED", buyerRes.messageId);
+
+      console.log("✅ Buyer Email Status:", buyerRes.messageId);
     }
 
-    // 9. Final Response to Clover
     return res.status(200).send("SUCCESS");
-
   } catch (err: any) {
-    console.error("❌ Webhook Processing Failed:", err.message);
-    // Always return 200 to Clover so it doesn't spam your endpoint with retries
+    console.error("❌ Webhook Processing Failed:", err.response?.data || err.message);
     return res.status(200).send("ERROR_LOGGED");
   }
 };
-
-
