@@ -372,6 +372,10 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     family: 4,
     debug: true,
     logger: true,
+    connectionTimeout: 20000, // 20 seconds
+  greetingTimeout: 20000,
+  socketTimeout: 20000,
+  pool: true,
   } as any);
 
   try {
