@@ -254,7 +254,7 @@ export const getCloverCategories = async (req: Request, res: Response) => {
 export const createCheckout = async (req: Request, res: Response) => {
   try {
     const { token, merchantId, frontendUrl } = getCloverConfig();
-    const { items, customer, orderType, address } = req.body;
+    const { items, customer, orderType, address, customerNote } = req.body;
 
     if (!token || !merchantId || !frontendUrl) {
       return res.status(500).json({ error: "Missing server configuration" });
@@ -265,10 +265,30 @@ export const createCheckout = async (req: Request, res: Response) => {
       0
     );
 
-    const lineItems = items.map((item: any) => ({
+const finalCloverNote = `
+ORDER TYPE: ${orderType}
+${orderType === "DELIVERY" ? `SHIP TO: ${address || "N/A"}` : "PICKUP AT STORE"}
+
+CUSTOMER EMAIL: ${customer.email}
+PHONE: ${customer.phoneNumber}
+FULL NAME: ${customer.fullName || `${customer.firstName} ${customer.lastName}`}
+
+${customerNote ? `CUSTOMER NOTE: ${customerNote}` : ""}
+
+---
+ITEMS:
+${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
+`.trim();
+
+    console.log("📝 Sending Clover Note:\n", finalCloverNote);
+
+    const lineItems = items.map((item: any, index: number) => ({
       name: item.product.name,
       unitQty: item.quantity,
       price: Math.round(item.product.price * 100),
+
+      // Attach the note ONLY to the first real item as fallback
+      ...(index === 0 ? { note: finalCloverNote } : {}),
     }));
 
     // Optional shipping line
@@ -278,23 +298,9 @@ export const createCheckout = async (req: Request, res: Response) => {
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 700,
-        note: address || "No address provided", // <-- IMPORTANT fallback
+        note: finalCloverNote, // <-- same note here too
       });
     }
-
-    const finalCloverNote = `
-ORDER TYPE: ${orderType}
-CUSTOMER EMAIL: ${customer.email}
-CUSTOMER PHONE: ${customer.phoneNumber}
-CUSTOMER NAME: ${customer.firstName} ${customer.lastName}
-${orderType === "DELIVERY" ? `DELIVERY ADDRESS: ${address}` : "PICKUP AT STORE"}
-
----
-ITEMS:
-${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
-    `.trim();
-
-    console.log("📝 Sending Clover Note:\n", finalCloverNote);
 
     const checkoutResponse = await axios.post(
       "https://apisandbox.dev.clover.com/invoicingcheckoutservice/v1/checkouts",
@@ -306,14 +312,19 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
           phoneNumber: customer.phoneNumber,
         },
         shoppingCart: { lineItems },
+
+        // keep this too, but don't depend on it
         note: finalCloverNote,
+
         metadata: {
           orderType,
           customerEmail: customer.email,
           customerPhone: customer.phoneNumber,
           customerName: `${customer.firstName} ${customer.lastName}`,
           address: address || "",
+          customerNote: customerNote || "",
         },
+
         successUrl: `${frontendUrl}/success`,
         cancelUrl: `${frontendUrl}/cancel`,
       },
@@ -339,7 +350,6 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
     res.status(500).json({ error: "Checkout failed" });
   }
 };
-
 
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
@@ -397,61 +407,66 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     console.log("💳 FULL PAYMENT DATA:", JSON.stringify(paymentData, null, 2));
 
     // 5. Gather all possible notes
-    const rawNotes = [
-      orderData.note,
-      paymentData.note,
-      event.note,
-      ...(orderData.lineItems?.elements?.map((li: any) => li.note) || []),
-    ];
-
-    const uniqueNotes = [
-      ...new Set(
-        rawNotes
-          .filter((n) => n && typeof n === "string" && n.trim() !== "")
-          .map((n) => n.trim())
-      ),
-    ];
-
-let orderNote = uniqueNotes.join("\n\n---\n\n") || "";
+ const rawNotes = [
+  orderData.note,
+  paymentData.note,
+  event.note,
+  ...(orderData.lineItems?.elements?.map((li: any) => li.note) || []),
+];
 
 console.log("🧾 RAW NOTES:", rawNotes);
+
+const uniqueNotes = [
+  ...new Set(
+    rawNotes
+      .filter((n) => n && typeof n === "string" && n.trim() !== "")
+      .map((n) => n.trim())
+  ),
+];
+
 console.log("🧾 UNIQUE NOTES:", uniqueNotes);
+
+// Prefer the note that contains customer info
+let orderNote =
+  uniqueNotes.find((n) => n.includes("CUSTOMER EMAIL")) ||
+  uniqueNotes[0] ||
+  "";
+
 console.log("🧾 FINAL orderNote:", orderNote);
 
-    // 6. Parse note safely
-    const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.+)/i);
-    const phoneMatch = orderNote.match(/CUSTOMER PHONE:\s*(.+)/i);
-    const nameMatch = orderNote.match(/CUSTOMER NAME:\s*(.+)/i);
-    const addressMatch = orderNote.match(/DELIVERY ADDRESS:\s*(.+)/i);
-    const orderTypeMatch = orderNote.match(/ORDER TYPE:\s*(.+)/i);
+// Parse EXACT labels from your actual stored note
+const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\n\r]+)/i);
+const phoneMatch = orderNote.match(/PHONE:\s*([^\n\r]+)/i);
+const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r]+)/i);
+const addressMatch = orderNote.match(/SHIP TO:\s*([^\n\r]+)/i);
+const orderTypeMatch = orderNote.match(/ORDER TYPE:\s*([^\n\r]+)/i);
+const customerNoteMatch = orderNote.match(/CUSTOMER NOTE:\s*([^\n\r]+)/i);
 
-    const cloverCust = orderData.customers?.elements?.[0];
+const cloverCust = orderData.customers?.elements?.[0];
 
-    const buyerEmail =
-      emailMatch?.[1]?.trim() ||
-      paymentData.receipt_email ||
-      cloverCust?.emailAddresses?.[0]?.email ||
-      null;
+const buyerEmail =
+  emailMatch?.[1]?.trim() ||
+  paymentData.receipt_email ||
+  cloverCust?.emailAddresses?.[0]?.email ||
+  null;
 
-    const buyerPhone =
-      phoneMatch?.[1]?.trim() ||
-      cloverCust?.phoneNumbers?.[0]?.phoneNumber ||
-      "N/A";
+const buyerPhone =
+  phoneMatch?.[1]?.trim() ||
+  cloverCust?.phoneNumbers?.[0]?.phoneNumber ||
+  "N/A";
 
-    const buyerName =
-      nameMatch?.[1]?.trim() ||
-      `${cloverCust?.firstName || ""} ${cloverCust?.lastName || ""}`.trim() ||
-      "Customer";
+const buyerName =
+  nameMatch?.[1]?.trim() ||
+  `${cloverCust?.firstName || ""} ${cloverCust?.lastName || ""}`.trim() ||
+  "Customer";
 
-    const deliveryAddress = addressMatch?.[1]?.trim() || "N/A";
-    const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
+const deliveryAddress = addressMatch?.[1]?.trim() || "N/A";
+const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
+const customerNoteText = customerNoteMatch?.[1]?.trim() || "None";
 
-    if (!orderNote) {
-      orderNote =
-        orderType === "PICKUP"
-          ? "ORDER TYPE: PICKUP (No additional notes)"
-          : "No customer notes found.";
-    }
+  if (!orderNote) {
+  orderNote = "No customer notes found.";
+}
 
     const totalAmount = (orderData.total || 0) / 100;
 
@@ -465,29 +480,30 @@ console.log("🧾 FINAL orderNote:", orderNote);
     });
 
     // 7. Send Merchant Notification
-    const merchantRes = await transporter.sendMail({
-      from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
-      to: process.env.MERCHANT_NOTIFICATION_EMAIL,
-      subject: `🚨 NEW ORDER - KES ${totalAmount} (${orderId})`,
-      html: `
-        <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px;">
-          <h2 style="color: #2e7d32;">New Payment Received!</h2>
-          <p><b>Customer:</b> ${buyerName}</p>
-          <p><b>Email:</b> ${buyerEmail || "Unknown"}</p>
-          <p><b>Phone:</b> ${buyerPhone}</p>
-          <p><b>Order Type:</b> ${orderType}</p>
-          ${
-            orderType === "DELIVERY"
-              ? `<p><b>Address:</b> ${deliveryAddress}</p>`
-              : `<p><b>Pickup:</b> Customer will collect in store</p>`
-          }
-          <p><b>Total:</b> KES ${totalAmount}</p>
-          <hr />
-          <p><b>Full Clover Note:</b></p>
-          <pre style="background: #f9f9f9; padding: 10px; white-space: pre-wrap;">${orderNote}</pre>
-        </div>
-      `,
-    });
+const merchantRes = await transporter.sendMail({
+  from: `"Kwetu Stores System" <${process.env.EMAIL_USER}>`,
+  to: process.env.MERCHANT_NOTIFICATION_EMAIL,
+  subject: `🚨 NEW ORDER - USD ${totalAmount} (${orderId})`,
+  html: `
+    <div style="font-family: sans-serif; border: 1px solid #eee; padding: 20px;">
+      <h2 style="color: #2e7d32;">New Payment Received!</h2>
+      <p><b>Customer:</b> ${buyerName}</p>
+      <p><b>Email:</b> ${buyerEmail || "Unknown"}</p>
+      <p><b>Phone:</b> ${buyerPhone}</p>
+      <p><b>Order Type:</b> ${orderType}</p>
+      ${
+        orderType === "DELIVERY"
+          ? `<p><b>Address:</b> ${deliveryAddress}</p>`
+          : `<p><b>Pickup:</b> Customer will collect in store</p>`
+      }
+      <p><b>Customer Note:</b> ${customerNoteText}</p>
+      <p><b>Total:</b> USD ${totalAmount}</p>
+      <hr />
+      <p><b>Raw Clover Note:</b></p>
+      <pre style="background: #f9f9f9; padding: 10px; white-space: pre-wrap;">${orderNote}</pre>
+    </div>
+  `,
+});
 
     console.log("✅ Merchant Email Status:", merchantRes.messageId);
 
@@ -505,7 +521,7 @@ console.log("🧾 FINAL orderNote:", orderNote);
         html: `
           <div style="font-family: sans-serif; padding: 20px;">
             <h3>Hi ${buyerName},</h3>
-            <p>Thank you for your order! We've received your payment of <b>KES ${totalAmount}</b>.</p>
+            <p>Thank you for your order! We've received your payment of <b>USD ${totalAmount}</b>.</p>
             <p><b>Order ID:</b> ${orderId}</p>
             <p><b>Order Type:</b> ${orderType}</p>
             ${orderType === "DELIVERY" ? `<p><b>Delivery Address:</b> ${deliveryAddress}</p>` : ""}
