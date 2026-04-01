@@ -296,7 +296,7 @@ FULL NAME: ${customer.firstName} ${customer.lastName}
           phoneNumber: customer.phoneNumber,
         },
         shoppingCart: { lineItems },
-        note: finalCloverNote,
+        note: address,
         metadata: {
           buyerEmail: customer.email, 
           address: address,           
@@ -394,21 +394,30 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     let orderNote = uniqueNotes.length > 0 ? uniqueNotes[0] : "";
     
     // 6. SMART PARSING (With Fallbacks to Clover's official Customer object)
+ // 6. ULTIMATE DATA PARSING (Regex + Clover Metadata + Clover Customer)
     const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\s,]+)/i);
     const phoneMatch = orderNote.match(/PHONE:\s*([^\s,]+)/i);
     const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r|]+)/i);
 
-    // FALLBACK LOGIC: If regex fails, use the official Clover Customer object we expanded in Step 4
-    const cloverCustomer = orderData.customers?.elements?.[0];
+    // Try parsing the metadata if the note fails
+    // Clover usually puts metadata in paymentData.externalPaymentId or orderData.clientInfo
+    const metadata = paymentData.externalPaymentId ? JSON.parse(paymentData.externalPaymentId) : {};
 
-    const buyerEmail = emailMatch?.[1]?.trim() || cloverCustomer?.emailAddresses?.[0]?.email || null;
-    const buyerPhone = phoneMatch?.[1]?.trim() || cloverCustomer?.phoneNumbers?.[0]?.phoneNumber || "N/A";
-    
+    const buyerEmail = emailMatch?.[1]?.trim() || 
+                       metadata.buyerEmail || 
+                       orderData.customers?.elements?.[0]?.emailAddresses?.[0]?.email || 
+                       null;
+
+    const buyerPhone = phoneMatch?.[1]?.trim() || 
+                       orderData.customers?.elements?.[0]?.phoneNumbers?.[0]?.phoneNumber || 
+                       "N/A";
+
     let buyerName = "Customer";
     if (nameMatch?.[1]) {
       buyerName = nameMatch[1].split(/ORDER TYPE/i)[0].trim();
-    } else if (cloverCustomer) {
-      buyerName = `${cloverCustomer.firstName || ""} ${cloverCustomer.lastName || ""}`.trim() || "Customer";
+    } else {
+      const cust = orderData.customers?.elements?.[0];
+      buyerName = cust ? `${cust.firstName || ""} ${cust.lastName || ""}`.trim() : "Customer";
     }
 
   const isPickup = orderNote.toUpperCase().includes("PICKUP AT STORE") || orderNote.toUpperCase().includes("ORDER TYPE: PICKUP");
