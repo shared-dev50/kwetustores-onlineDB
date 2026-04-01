@@ -428,6 +428,7 @@ console.log("🧾 UNIQUE NOTES:", uniqueNotes);
 
 // Prefer the note that contains customer info
 let orderNote =
+  uniqueNotes.find((n) => n.includes("ORDER TYPE")) ||
   uniqueNotes.find((n) => n.includes("CUSTOMER EMAIL")) ||
   uniqueNotes[0] ||
   "";
@@ -435,12 +436,12 @@ let orderNote =
 console.log("🧾 FINAL orderNote:", orderNote);
 
 // Parse EXACT labels from your actual stored note
-const emailMatch = orderNote.match(/CUSTOMER EMAIL:\s*([^\n\r]+)/i);
-const phoneMatch = orderNote.match(/PHONE:\s*([^\n\r]+)/i);
-const nameMatch = orderNote.match(/FULL NAME:\s*([^\n\r]+)/i);
-const addressMatch = orderNote.match(/SHIP TO:\s*([^\n\r]+)/i);
-const orderTypeMatch = orderNote.match(/ORDER TYPE:\s*([^\n\r]+)/i);
-const customerNoteMatch = orderNote.match(/CUSTOMER NOTE:\s*([^\n\r]+)/i);
+const emailMatch = orderNote.match(/^CUSTOMER EMAIL:\s*(.+)$/im);
+const phoneMatch = orderNote.match(/^PHONE:\s*(.+)$/im);
+const nameMatch = orderNote.match(/^FULL NAME:\s*(.+)$/im);
+const addressMatch = orderNote.match(/^SHIP TO:\s*(.+)$/im);
+const orderTypeMatch = orderNote.match(/^ORDER TYPE:\s*(.+)$/im);
+const customerNoteMatch = orderNote.match(/^CUSTOMER NOTE:\s*(.+)$/im);
 
 const cloverCust = orderData.customers?.elements?.[0];
 
