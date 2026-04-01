@@ -280,14 +280,12 @@ export const createCheckout = async (req: Request, res: Response) => {
     }
 
 const finalCloverNote = `
-ADDRESS:
+ORDER TYPE: ${orderType}
+CUSTOMER EMAIL: ${customer.email}
+CUSTOMER PHONE: ${customer.phoneNumber}
+CUSTOMER NAME: ${customer.firstName} ${customer.lastName}
+
 ${address}
-
-CUSTOMER EMAIL:
-${customer.email}
-
-CUSTOMER PHONE:
-${customer.phoneNumber}
 
 ---
 ITEMS:
@@ -335,85 +333,119 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
-  // 1. Handshake (Clover verification)
-  if (event.verificationCode) return res.status(200).send(event.verificationCode);
+  // 1. Clover verification handshake
+  if (event.verificationCode) {
+    return res.status(200).send(event.verificationCode);
+  }
 
   console.log("🚀 Webhook Triggered. Event ID:", event.id);
 
   try {
     const { token, merchantId } = getCloverConfig();
 
-    // 2. Get the Payment ID from the webhook
     const paymentId = event.id;
 
-    // 3. Fetch the payment details, including metadata
+    // 2. Fetch payment from Clover
     const paymentResponse = await axios.get(
-      `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}?expand=order`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     );
 
-    const orderId = paymentResponse.data.order?.id;
-    if (!orderId) return res.status(200).send("NO_ORDER");
+    const paymentData = paymentResponse.data;
 
-    // 4. Fetch the Order details (note, lineItems, customers)
+    // 3. Try to get orderId from payment
+    const orderId = paymentData.order?.id || paymentData.order?.href?.split("/").pop();
+
+    if (!orderId) {
+      console.log("⚠️ No orderId found on payment");
+      return res.status(200).send("NO_ORDER");
+    }
+
+    // 4. Fetch full order details
     const orderResponse = await axios.get(
       `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=customers,lineItems`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     );
 
     const orderData = orderResponse.data;
 
-    // 5. Determine the order note (address)
-    let orderNote = paymentResponse.data.note || orderData.note || "No address provided";
-    if (!orderNote || orderNote === "No address provided") {
-      const firstItem = orderData.lineItems?.elements?.[0];
-      orderNote = firstItem?.note || "No address found in Order or Line Items";
-    }
+    // 5. Try to find note from multiple places
+    let orderNote =
+      paymentData.note ||
+      orderData.note ||
+      orderData.lineItems?.elements?.[0]?.note ||
+      "No address found in Order or Line Items";
 
-    // 6. Pull buyer email from metadata first, then fallback to customer
-  const extractedEmailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.*)/i);
-const extractedEmail = extractedEmailMatch?.[1]?.trim();
+    // 6. Extract customer email from note if Clover doesn't return it
+    const extractedEmailMatch = orderNote.match(/CUSTOMER EMAIL:\s*(.*)/i);
+    const extractedEmail = extractedEmailMatch?.[1]?.trim() || null;
 
-const buyerEmail =
-  paymentResponse.data.metadata?.buyerEmail ||
-  paymentResponse.data.receipt_email ||
-  orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email ||
-  extractedEmail ||
-  null;
+    const extractedPhoneMatch = orderNote.match(/PHONE:\s*(.*)/i);
+    const extractedPhone = extractedPhoneMatch?.[1]?.trim() || null;
 
-    console.log(`🔍 Order Note: ${orderNote.substring(0, 50)}...`);
-    console.log(`🔍 Buyer Email: ${buyerEmail}`);
+    const buyerEmail =
+      paymentData.receipt_email ||
+      orderData.customers?.elements?.[0]?.emailAddresses?.elements?.[0]?.email ||
+      extractedEmail ||
+      null;
 
-    // 7. Configure transporter (Gmail or any SMTP)
+    console.log("🔍 Order Note:", orderNote);
+    console.log("🔍 Buyer Email:", buyerEmail);
+    console.log("🔍 Buyer Phone:", extractedPhone);
 
-    // 8. Send Merchant Email
+    // 7. Send merchant email
     await transporter.sendMail({
       from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
       to: process.env.MERCHANT_NOTIFICATION_EMAIL,
       subject: `🚨 Kwetu Order: ${orderId}`,
-      html: `<div style="padding:20px; border:1px solid #ddd;">
-               <h2>New Order!</h2>
-               <p><strong>Note/Address:</strong></p>
-               <pre>${orderNote}</pre>
-             </div>`,
+      html: `
+        <div style="padding:20px; border:1px solid #ddd; border-radius: 10px;">
+          <h2>New Order!</h2>
+          <p><strong>Order ID:</strong> ${orderId}</p>
+          <p><strong>Customer Email:</strong> ${buyerEmail || "Not found"}</p>
+          <p><strong>Customer Phone:</strong> ${extractedPhone || "Not found"}</p>
+          <p><strong>Order Details:</strong></p>
+          <pre style="white-space: pre-wrap; font-family: sans-serif;">${orderNote}</pre>
+        </div>
+      `,
     });
+
     console.log("✅ Merchant Email Sent Successfully");
 
-    // 9. Send Buyer Email (if available)
+    // 8. Send customer email if we found their email
     if (buyerEmail) {
       await transporter.sendMail({
         from: `"Kwetu Stores" <${process.env.EMAIL_USER}>`,
         to: buyerEmail,
         subject: `Your Kwetu Stores Order Confirmation`,
-        html: `<p>We received your payment for order <b>${orderId}</b>.</p>
-               <p>Details / Address: ${orderNote}</p>`,
+        html: `
+          <div style="padding:20px; border:1px solid #ddd; border-radius: 10px;">
+            <h2>Thank you for your order!</h2>
+            <p>We’ve received your payment successfully.</p>
+            <p><strong>Order ID:</strong> ${orderId}</p>
+            <p><strong>Order Summary:</strong></p>
+            <pre style="white-space: pre-wrap; font-family: sans-serif;">${orderNote}</pre>
+            <p>We’ll process your order shortly.</p>
+          </div>
+        `,
       });
+
       console.log("✅ Buyer Email Sent Successfully");
+    } else {
+      console.log("⚠️ Buyer email not found, skipping buyer email.");
     }
 
     return res.status(200).send("SUCCESS");
   } catch (err: any) {
-    console.error("❌ WEBHOOK CRASHED:", err.message);
+    console.error("❌ WEBHOOK CRASHED:", err.response?.data || err.message);
     return res.status(500).send("ERROR");
   }
 };
