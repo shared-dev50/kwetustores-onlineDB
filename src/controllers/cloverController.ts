@@ -400,24 +400,20 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     //   logger: true,
     // } as any);
 
- const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true, // Use SSL
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_PASS,
-      },
-      // FORCE IPv4 ONLY
-      family: 4, 
-      // Add this to prevent the "ENETUNREACH" on IPv6 lookups
-      dnsTimeout: 10000,
-      connectionTimeout: 60000, 
-      greetingTimeout: 60000,
-      socketTimeout: 60000,
-      debug: true,
-      logger: true,
-    } as any);
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Use SSL/TLS
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.GOOGLE_PASS,
+  },
+  family: 4, 
+  connectionTimeout: 30000, 
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
+  pool: false, 
+} as any);
 
     console.log("📨 BLOCKER 1: Sending Merchant Notification...");
     const merchantRes = await transporter.sendMail({
