@@ -3,7 +3,6 @@ import type { Request, Response } from "express";
 import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
-import { debug, log } from 'node:console';
 
 export interface CloverInventoryResponse {
   elements: CloverItem[];
@@ -20,10 +19,13 @@ interface CloverStockResponse {
 }
 
 const getCloverConfig = () => {
-  const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
+ const token = process.env.CLOVER_SECRET?.replace(
+      /[^\x20-\x7E]/g,
+      "",
+    ).trim();
   const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
   const baseUrl = process.env.CLOVER_BASE_URL?.trim();
-  const ecommUrl = process.env.CLOVER_ECOMM_URL?.trim() || "https://scl-sandbox.dev.clover.com";
+  const ecommUrl = process.env.CLOVER_ECOMM_URL?.trim() || "https://checkout.clover.com";
   const frontendUrl = process.env.FRONTEND_URL?.trim();
 
   if (!token || !merchantId || !baseUrl) {
@@ -38,20 +40,6 @@ const getCloverConfig = () => {
     frontendUrl: frontendUrl ? frontendUrl.replace(/\/$/, "") : undefined,  
   };
 };
-
-// const createCloverClient = () => {
-//   const { token, merchantId, baseUrl } = getCloverConfig();
-
-//   return axios.create({
-//     baseURL: `${baseUrl}/merchants/${merchantId}`,
-//     headers: {
-//       Authorization: `Bearer ${token}`,
-//       Accept: "application/json",
-//       "Content-Type": "application/json",
-//       "User-Agent": "Kwetu-Stores-Backend",
-//     },
-//   });
-// };
 
 const createCloverClient = () => {
   const { token, merchantId, baseUrl } = getCloverConfig();
@@ -237,7 +225,7 @@ export const getCloverCategories = async (req: Request, res: Response) => {
 
 export const createCheckout = async (req: Request, res: Response) => {
   try {
-    const { token, merchantId, frontendUrl } = getCloverConfig();
+    const { token, merchantId, frontendUrl,baseUrl } = getCloverConfig();
     const { items, customer, orderType, address, customerNote } = req.body;
 
     if (!token || !merchantId || !frontendUrl) {
@@ -276,15 +264,14 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 
     if (orderType === "DELIVERY" && totalItemsCount > 0) {
       lineItems.push({
-        id: "71CZGC2X5GRT2",
+        id: "P79B9AXNV6BP4",
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 700,
       });
     }
-
     const checkoutResponse = await axios.post(
-      "https://apisandbox.dev.clover.com/invoicingcheckoutservice/v1/checkouts",
+      `${baseUrl}/invoicingcheckoutservice/v1/checkouts`,
       {
         customer: {
           email: customer.email,
@@ -357,8 +344,8 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
   console.log("🚀 Clover Webhook received. Event ID:", event.id || event.objectId);
 
   try {
-    const merchantId = process.env.CLOVER_MERCHANT_ID;
-    const token = process.env.CLOVER_SECRET;
+    const merchantId = process.env.CLOVER_MERCHANT_ID?.trim();
+    const token = process.env.CLOVER_SECRET?.replace(/[^\x20-\x7E]/g, "").trim();
     const paymentId = event.objectId || event.id;
 
     if (!paymentId || event.type === "PING") {
@@ -367,7 +354,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
 
     // 2. Fetch Order Data 
     const paymentResponse = await axios.get(
-      `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/payments/${paymentId}`,
+      `${process.env.CLOVER_ECOMM_URL}/merchants/${merchantId}/payments/${paymentId}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const paymentData = paymentResponse.data;
@@ -376,7 +363,7 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     if (!orderId) return res.status(200).send("NO_ORDER_ID");
 
     const orderResponse = await axios.get(
-      `https://apisandbox.dev.clover.com/v3/merchants/${merchantId}/orders/${orderId}?expand=lineItems,customers`,
+      `${process.env.CLOVER_ECOMM_URL}/v3/merchants/${merchantId}/orders/${orderId}?expand=lineItems,customers`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const orderData = orderResponse.data;
@@ -399,22 +386,6 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const buyerName = nameMatch?.[1]?.trim() || "Customer";
     const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
     const totalAmount = (orderData.total || 0) / 100;
-
-    // const transporter = nodemailer.createTransport({
-    //   host: "smtp.gmail.com",
-    //   port: 465,
-    //   secure: true,
-    //   auth: {
-    //     user: process.env.EMAIL_USER,
-    //     pass: process.env.GOOGLE_PASS,
-    //   },
-    //   family: 4, 
-    //   connectionTimeout: 60000, 
-    //   greetingTimeout: 60000,
-    //   socketTimeout: 60000,
-    //   debug: true,
-    //   logger: true,
-    // } as any);
 
 
     console.log("📨 BLOCKER 1: Sending Merchant Notification...");
