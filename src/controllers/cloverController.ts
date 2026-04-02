@@ -267,7 +267,7 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
         id: "P79B9AXNV6BP4",
         name: "Shipping Fee",
         unitQty: totalItemsCount,
-        price: 700,
+        price: 100,
       });
     }
     const checkoutResponse = await axios.post(
