@@ -332,18 +332,23 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
 
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_PASS,
   },
-  family: 4, // Force IPv4 to avoid the IPv6 ENETUNREACH error
-  connectionTimeout: 60000, // 60 Seconds
-  greetingTimeout: 60000,
-  socketTimeout: 60000,
+  family: 4, 
+  connectionTimeout: 30000, // 60 Seconds
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
+  debug: true,
+  logger: true,
   pool: true, 
 } as any);
+
+await transporter.verify();
+console.log("✅ Email transporter verified and ready to send messages.");
 
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
