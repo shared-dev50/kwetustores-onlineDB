@@ -344,11 +344,7 @@ const transporter = nodemailer.createTransport({
   socketTimeout: 30000,
   debug: true,
   logger: true,
-  pool: true, 
 } as any);
-
-await transporter.verify();
-console.log("✅ Email transporter verified and ready to send messages.");
 
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
@@ -567,7 +563,12 @@ ${orderNote}
     return res.status(200).send("SUCCESS");
 
   } catch (err: any) {
-    console.error("Webhook Processing Failed:", err.message);
+   console.error("❌ Webhook Processing Failed:");
+console.error("Message:", err.message);
+console.error("Stack:", err.stack);
+console.error("Response Data:", err.response?.data);
+console.error("Response Status:", err.response?.status);
+console.error("Full Error:", err);
     return res.status(200).send("ERROR_LOGGED");
   }
 };
