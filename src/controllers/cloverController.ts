@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
-import { log } from 'node:console';
+import { debug, log } from 'node:console';
 
 export interface CloverInventoryResponse {
   elements: CloverItem[];
@@ -384,21 +384,35 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     const orderType = orderTypeMatch?.[1]?.trim()?.toUpperCase() || "UNKNOWN";
     const totalAmount = (orderData.total || 0) / 100;
 
+    // const transporter = nodemailer.createTransport({
+    //   host: "smtp.gmail.com",
+    //   port: 465,
+    //   secure: true,
+    //   auth: {
+    //     user: process.env.EMAIL_USER,
+    //     pass: process.env.GOOGLE_PASS,
+    //   },
+    //   family: 4, 
+    //   connectionTimeout: 60000, 
+    //   greetingTimeout: 60000,
+    //   socketTimeout: 60000,
+    //   debug: true,
+    //   logger: true,
+    // } as any);
+
     const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_PASS,
-      },
-      family: 4, 
-      connectionTimeout: 60000, 
-      greetingTimeout: 60000,
-      socketTimeout: 60000,
-      debug: true,
-      logger: true,
-    } as any);
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.GOOGLE_PASS,
+  },
+  family: 4,
+  debug: true,
+  logger: true,
+  connectionTimeout: 60000,
+  greetingTimeout: 60000,
+  socketTimeout: 60000,
+} as any);
 
     console.log("📨 BLOCKER 1: Sending Merchant Notification...");
     const merchantRes = await transporter.sendMail({
