@@ -330,6 +330,21 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
   }
 };
 
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.GOOGLE_PASS,
+  },
+  family: 4, // Force IPv4 to avoid the IPv6 ENETUNREACH error
+  connectionTimeout: 60000, // 60 Seconds
+  greetingTimeout: 60000,
+  socketTimeout: 60000,
+  pool: true, 
+} as any);
+
 export const handleCloverWebhook = async (req: Request, res: Response) => {
   const event = req.body;
 
@@ -400,20 +415,6 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
     //   logger: true,
     // } as any);
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // Use SSL/TLS
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.GOOGLE_PASS,
-  },
-  family: 4, 
-  connectionTimeout: 30000, 
-  greetingTimeout: 30000,
-  socketTimeout: 30000,
-  pool: false, 
-} as any);
 
     console.log("📨 BLOCKER 1: Sending Merchant Notification...");
     const merchantRes = await transporter.sendMail({
