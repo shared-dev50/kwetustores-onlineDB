@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import nodemailer from "nodemailer";
 import axios from "axios";
 import type { CloverItem } from "../entities/clover.js";
+import { log } from 'node:console';
 
 export interface CloverInventoryResponse {
   elements: CloverItem[];
@@ -392,9 +393,11 @@ export const handleCloverWebhook = async (req: Request, res: Response) => {
         pass: process.env.GOOGLE_PASS,
       },
       family: 4, 
-      connectionTimeout: 30000, 
-      greetingTimeout: 30000,
-      socketTimeout: 30000,
+      connectionTimeout: 60000, 
+      greetingTimeout: 60000,
+      socketTimeout: 60000,
+      debug: true,
+      logger: true,
     } as any);
 
     console.log("📨 BLOCKER 1: Sending Merchant Notification...");
