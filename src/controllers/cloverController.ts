@@ -255,16 +255,15 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
     console.log("📝 Sending Clover Note:\n", finalCloverNote);
 
     const lineItems = items.map((item: any, index: number) => ({
-      name: item.product.name,
+      itemRefUuid: item.product.id,
       unitQty: item.quantity,
-      price: Math.round(item.product.price * 100),
+   
 
       ...(index === 0 ? { note: finalCloverNote } : {}),
     }));
 
     if (orderType === "DELIVERY" && totalItemsCount > 0) {
       lineItems.push({
-        id: "P79B9AXNV6BP4",
         name: "Shipping Fee",
         unitQty: totalItemsCount,
         price: 100,
