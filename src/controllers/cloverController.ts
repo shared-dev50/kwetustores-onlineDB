@@ -266,7 +266,7 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
       lineItems.push({
         name: "Shipping Fee",
         unitQty: totalItemsCount,
-        price: 100,
+        price: 700,
       });
     }
     const checkoutResponse = await axios.post(
