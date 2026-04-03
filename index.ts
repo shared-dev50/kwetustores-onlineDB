@@ -11,7 +11,9 @@ const port = process.env.PORT || 3000;
 // --- CORS CONFIGURATION ---
 const allowedOrigins = [
   "http://localhost:5173", 
-  "https://kwetustores-online.vercel.app" 
+  "https://kwetustores-online.vercel.app",
+  "https://kwetustores.com"
+
 ];
 
 app.use(
