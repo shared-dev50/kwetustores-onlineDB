@@ -245,28 +245,20 @@ CUSTOMER EMAIL: ${customer.email}
 PHONE: ${customer.phoneNumber}
 FULL NAME: ${customer.fullName || `${customer.firstName} ${customer.lastName}`}
 
-${customerNote ? `CUSTOMER NOTE: ${customerNote}` : ""}
-
----
-ITEMS:
-${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
-`.trim();
-
-    console.log("📝 Sending Clover Note:\n", finalCloverNote);
+${customerNote ? `CUSTOMER NOTE: ${customerNote}` : ""}`.trim();
 
     const lineItems = items.map((item: any, index: number) => ({
-      itemRefUuid: item.product.id,
+      itemRefUuid: item.id || item.product?.id,
       unitQty: item.quantity,
-   
-
       ...(index === 0 ? { note: finalCloverNote } : {}),
     }));
 
-    if (orderType === "DELIVERY" && totalItemsCount > 0) {
+    const shippingItemId = process.env.CLOVER_SHIPPING_ITEM_ID;
+
+ if (orderType === "DELIVERY" && totalItemsCount > 0) {
       lineItems.push({
-        name: "Shipping Fee",
+    itemRefUuid: shippingItemId,
         unitQty: totalItemsCount,
-        price: 700,
       });
     }
     const checkoutResponse = await axios.post(
@@ -308,12 +300,17 @@ ${items.map((i: any) => `- ${i.quantity}x ${i.product.name}`).join("\n")}
       checkoutUrl: checkoutResponse.data.href,
     });
   } catch (error: any) {
-    console.error(
-      "Checkout Error Details:",
-      error.response?.data || error.message
-    );
-    res.status(500).json({ error: "Checkout failed" });
+  console.error("Clover Checkout Failed");
+
+  if (error.response) {
+    console.error("Status:", error.response.status);
+    console.error("Data:", JSON.stringify(error.response.data, null, 2));
+  } else {
+    console.error("Message:", error.message);
   }
+
+  return res.status(500).json({ error: "Checkout failed" });
+}
 };
 
 const transporter = nodemailer.createTransport({
